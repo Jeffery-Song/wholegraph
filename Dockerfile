@@ -37,7 +37,7 @@ RUN mkdir build && cd build && \
         cmake -DCMAKE_BUILD_TYPE=Release .. && make -j 
 
 ENV WHOLEGRAPH_PATH=/wholegraph \
-    PYTHONPATH=/wholegraph/python:/wholegraph/build:${PYTHONPATH}
-#     CPATH=/usr/local/cuda/include:$CPATH \
-#     LD_LIBRARY_PATH=/usr/local/cuda/targets/x86_64-linux/lib/stubs:$LD_LIBRARY_PATH 
+    PYTHONPATH=/wholegraph/python:/wholegraph/build:${PYTHONPATH} \
+    OMPI_ALLOW_RUN_AS_ROOT=1 \
+    OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
 
