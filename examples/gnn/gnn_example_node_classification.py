@@ -19,6 +19,7 @@ from optparse import OptionParser
 import apex
 import torch
 import torch.nn.functional as F
+from torch.cuda.amp import autocast, GradScaler
 from apex.parallel import DistributedDataParallel as DDP
 from mpi4py import MPI
 from torch.utils.data import DataLoader
@@ -107,6 +108,13 @@ parser.add_option(
     dest="use_nccl",
     default=False,
     help="whether use nccl for embeddings, default False",
+)
+parser.add_option(
+    "--amp-off",
+    action="store_false",
+    dest="use_amp",
+    default=True,
+    help="whether use amp for training, default True",
 )
 
 (options, args) = parser.parse_args()
@@ -497,19 +505,33 @@ def train(train_data, valid_data, model, optimizer):
     loss_fcn = torch.nn.CrossEntropyLoss()
     skip_world_size_epoch_time = 0
     train_start_time = time.time()
+
+    scaler = GradScaler()
+
     while train_step < total_steps:
         if epoch == 1:
             skip_world_size_epoch_time = time.time()
         for i, (idx, label) in enumerate(train_dataloader):
             if train_step >= total_steps:
                 break
+            
             label = torch.reshape(label, (-1,)).cuda()
             optimizer.zero_grad()
             model.train()
-            logits = model(idx)
-            loss = loss_fcn(logits, label)
-            loss.backward()
-            optimizer.step()
+
+            if options.use_amp:
+                with autocast(enabled=options.use_amp):
+                    logits = model(idx)
+                    loss = loss_fcn(logits, label)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                logits = model(idx)
+                loss = loss_fcn(logits, label)
+                loss.backward()
+                optimizer.step()
+
             if comm.get_rank() == 0 and train_step % 100 == 0:
                 print(
                     "[%s] [LOSS] step=%d, loss=%f"
