@@ -18,6 +18,8 @@ from optparse import OptionParser
 
 import apex
 import torch
+import torch.nn as nn
+import torch.optim as optim
 import torch.nn.functional as F
 from torch.cuda.amp import autocast, GradScaler
 from apex.parallel import DistributedDataParallel as DDP
@@ -35,7 +37,8 @@ parser.add_option(
     "-r",
     "--root_dir",
     dest="root_dir",
-    default="dataset",
+    default="/nvme/songxiaoniu/graph-learning/wholegraph",
+    # default="/dev/shm/dataset",
     help="dataset root directory.",
 )
 parser.add_option(
@@ -43,29 +46,30 @@ parser.add_option(
     "--graph_name",
     dest="graph_name",
     default="ogbn-papers100M",
+    # default="papers100M",
     help="graph name",
 )
 parser.add_option(
-    "-e", "--epochs", type="int", dest="epochs", default=24, help="number of epochs"
+    "-e", "--epochs", type="int", dest="epochs", default=4, help="number of epochs"
 )
 parser.add_option(
-    "-b", "--batchsize", type="int", dest="batchsize", default=1024, help="batch size"
+    "-b", "--batchsize", type="int", dest="batchsize", default=8000, help="batch size"
 )
-parser.add_option(
-    "-c", "--classnum", type="int", dest="classnum", default=172, help="class number"
-)
+parser.add_option("--skip_epoch", type="int", dest="skip_epoch", default=3, help="num of skip epoch for profile")
+parser.add_option("--local_step", type="int", dest="local_step", default=19, help="num of steps on a GPU in an epoch")
 parser.add_option(
     "-n",
     "--neighbors",
     dest="neighbors",
-    default="30,30,30",
+    # default="5,5",
+    default="10,25",
     help="train neighboor sample count",
 )
 parser.add_option(
     "--hiddensize", type="int", dest="hiddensize", default=256, help="hidden size"
 )
 parser.add_option(
-    "-l", "--layernum", type="int", dest="layernum", default=3, help="layer number"
+    "-l", "--layernum", type="int", dest="layernum", default=2, help="layer number"
 )
 parser.add_option(
     "-m",
@@ -78,7 +82,7 @@ parser.add_option(
     "-f",
     "--framework",
     dest="framework",
-    default="wg",
+    default="dgl",
     help="framework type, valid values are: dgl, pyg, wg",
 )
 parser.add_option("--heads", type="int", dest="heads", default=1, help="num heads")
@@ -310,6 +314,7 @@ class HomoGNNModel(torch.nn.Module):
         self.mean_output = True if options.model == "gat" else False
         self.add_self_loop = True if options.model == "gat" else False
         self.gather_fn = embedding_ops.EmbeddingLookUpModule(need_backward=False)
+        self.dropout = nn.Dropout(options.dropout)
 
     def forward(self, ids):
         ids = ids.to(self.graph.id_type()).cuda()
@@ -338,7 +343,7 @@ class HomoGNNModel(torch.nn.Module):
                 if options.framework == "dgl":
                     x_feat = x_feat.flatten(1)
                 x_feat = F.relu(x_feat)
-                x_feat = F.dropout(x_feat, options.dropout, training=self.training)
+                x_feat = self.dropout(x_feat)
         if options.framework == "dgl" and self.mean_output:
             out_feat = x_feat.mean(1)
         else:
@@ -377,91 +382,6 @@ def valid(valid_dataloader, model):
 def test(test_data, model):
     test_dataloader = create_test_dataset(data_tensor_dict=test_data)
     valid_test(test_dataloader, model, "TEST")
-
-
-def train_torch_sampler(train_data, valid_data, model, optimizer):
-    print("start training...")
-    train_dataset = graph_ops.NodeClassificationDataset(
-        train_data, comm.get_rank(), comm.get_world_size()
-    )
-    valid_dataset = graph_ops.NodeClassificationDataset(
-        valid_data, comm.get_rank(), comm.get_world_size()
-    )
-    train_sampler = torch.utils.data.distributed.DistributedSampler(
-        train_dataset,
-        num_replicas=comm.get_world_size(),
-        rank=comm.get_rank(),
-        shuffle=True,
-        drop_last=True,
-    )
-    valid_sampler = torch.utils.data.distributed.DistributedSampler(
-        valid_dataset, num_replicas=1, rank=0, shuffle=False, drop_last=False
-    )
-
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=options.batchsize,
-        num_workers=options.dataloaderworkers,
-        pin_memory=True,
-        sampler=train_sampler,
-    )
-    valid_dataloader = torch.utils.data.DataLoader(
-        valid_dataset,
-        batch_size=options.batchsize,
-        num_workers=options.dataloaderworkers,
-        pin_memory=True,
-        sampler=valid_sampler,
-    )
-    est_epoch_steps = get_train_step(
-        len(train_data["idx"]), 1, options.batchsize, comm.get_world_size()
-    )
-    if comm.get_rank() == 0:
-        print(
-            "Estimated epoch steps=%d, total steps=%d"
-            % (est_epoch_steps, est_epoch_steps * options.epochs)
-        )
-    train_step = 0
-    epoch = 0
-    loss_fcn = torch.nn.CrossEntropyLoss()
-    skip_count = 8
-    skip_epoch_time = time.time()
-    train_start_time = time.time()
-    while epoch < options.epochs:
-        for i, (idx, label) in enumerate(train_dataloader):
-            label = torch.reshape(label, (-1,)).cuda()
-            optimizer.zero_grad()
-            model.train()
-            logits = model(idx)
-            loss = loss_fcn(logits, label)
-            loss.backward()
-            optimizer.step()
-            if comm.get_rank() == 0 and train_step % 100 == 0:
-                print(
-                    "[%s] [LOSS] step=%d, loss=%f"
-                    % (
-                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        train_step,
-                        loss.cpu().item(),
-                    )
-                )
-            train_step = train_step + 1
-        epoch = epoch + 1
-        if epoch == skip_count:
-            skip_epoch_time = time.time()
-    comm.synchronize()
-    train_end_time = time.time()
-    train_time = train_end_time - train_start_time
-    if comm.get_rank() == 0:
-        print(
-            "[%s] [TRAIN_TIME] train time is %.2f seconds"
-            % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), train_time)
-        )
-        print(
-            "[EPOCH_TIME] %.2f seconds"
-            % ((train_end_time - skip_epoch_time) / (options.epochs - skip_count),)
-        )
-    valid(valid_dataloader, model)
-
 
 def create_train_dataset(data_tensor_dict, rank, size):
     return DataLoader(
@@ -556,7 +476,6 @@ def train(train_data, valid_data, model, optimizer):
                 "[EPOCH_TIME] %.2f seconds, maybe large due to not enough epoch skipped."
                 % ((train_end_time - train_start_time) / options.epochs,)
             )
-        else:
             print(
                 "[EPOCH_TIME] %.2f seconds"
                 % (
@@ -627,7 +546,7 @@ def main():
     model.cuda()
     print("Rank=%d, model movded to cuda." % (comma.Get_rank(),))
     model = DDP(model, delay_allreduce=True)
-    optimizer = apex.optimizers.FusedAdam(model.parameters(), lr=options.lr)
+    optimizer = optim.Adam(model.parameters(), lr=options.lr)
     print("Rank=%d, optimizer created." % (comma.Get_rank(),))
 
     train(train_data, valid_data, model, optimizer)
@@ -638,4 +557,15 @@ def main():
 
 
 if __name__ == "__main__":
+    num_class = {
+        'reddit' : 41,
+        'products' : 47,
+        'twitter' : 150,
+        'papers100M' : 172,
+        'ogbn-papers100M' : 172,
+        'uk-2006-05' : 150,
+        'com-friendster' : 100
+    }
+    options.classnum = num_class[options.graph_name]
+    print(options)
     main()
