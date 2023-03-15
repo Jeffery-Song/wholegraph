@@ -55,7 +55,7 @@ parser.add_option(
 parser.add_option(
     "-b", "--batchsize", type="int", dest="batchsize", default=8000, help="batch size"
 )
-parser.add_option("--skip_epoch", type="int", dest="skip_epoch", default=3, help="num of skip epoch for profile")
+parser.add_option("--skip_epoch", type="int", dest="skip_epoch", default=2, help="num of skip epoch for profile")
 parser.add_option("--local_step", type="int", dest="local_step", default=19, help="num of steps on a GPU in an epoch")
 parser.add_option(
     "-n",
@@ -317,6 +317,8 @@ class HomoGNNModel(torch.nn.Module):
         self.dropout = nn.Dropout(options.dropout)
 
     def forward(self, ids):
+        torch.cuda.synchronize()
+        step_start_time = time.time()
         ids = ids.to(self.graph.id_type()).cuda()
         (
             target_gids,
@@ -325,7 +327,11 @@ class HomoGNNModel(torch.nn.Module):
             csr_col_inds,
             sample_dup_counts,
         ) = self.graph.unweighted_sample_without_replacement(ids, self.max_neighbors)
+        torch.cuda.synchronize()
+        sample_end_time = time.time()
         x_feat = self.gather_fn(target_gids[0], self.graph.node_feat)
+        torch.cuda.synchronize()
+        extract_end_time = time.time()
         # x_feat = self.graph.gather(target_gids[0])
         for i in range(self.num_layer):
             x_target_feat = x_feat[: target_gids[i + 1].numel()]
@@ -348,7 +354,9 @@ class HomoGNNModel(torch.nn.Module):
             out_feat = x_feat.mean(1)
         else:
             out_feat = x_feat
-        return out_feat
+        latency_s = (sample_end_time - step_start_time)
+        latency_e = (extract_end_time - sample_end_time)
+        return out_feat, (latency_s, latency_e, extract_end_time)
 
 
 def valid_test(dataloader, model, name):
@@ -359,7 +367,7 @@ def valid_test(dataloader, model, name):
     for i, (idx, label) in enumerate(dataloader):
         label = torch.reshape(label, (-1,)).cuda()
         model.eval()
-        logits = model(idx)
+        logits, _ = model(idx)
         pred = torch.argmax(logits, 1)
         correct = (pred == label).sum()
         total_correct += correct.cpu()
@@ -409,9 +417,8 @@ def train(train_data, valid_data, model, optimizer):
         data_tensor_dict=train_data, rank=comm.get_rank(), size=comm.get_world_size()
     )
     valid_dataloader = create_valid_dataset(data_tensor_dict=valid_data)
-    total_steps = get_train_step(
-        len(train_data["idx"]), options.epochs, options.batchsize, comm.get_world_size()
-    )
+    total_steps = options.epochs* options.local_step
+    profile_steps = (options.epochs - options.skip_epoch) * options.local_step
     if comm.get_rank() == 0:
         print(
             "epoch=%d total_steps=%d"
@@ -420,69 +427,121 @@ def train(train_data, valid_data, model, optimizer):
                 total_steps,
             )
         )
-    train_step = 0
-    epoch = 0
     loss_fcn = torch.nn.CrossEntropyLoss()
-    skip_world_size_epoch_time = 0
-    train_start_time = time.time()
-
     scaler = GradScaler()
+    model.train()
 
-    while train_step < total_steps:
-        if epoch == 1:
-            skip_world_size_epoch_time = time.time()
+    # directly enumerate train_dataloader
+    test_start_time = time.time()
+    cnt = 0
+    for i, (idx, label) in enumerate(train_dataloader):
+        cnt += 1
+    test_end_time = time.time()
+    print(
+        "!!!!Train_dataloader(with %d items) enumerate latency: %f"
+        % (cnt, (test_end_time - test_start_time))
+    )
+    # transfer into a list with each item 8000 batchsize
+    trans_start_time = time.time()
+    train_data_list = []
+    for i, (idx, label) in enumerate(train_dataloader):
+        train_data_list.append((idx, label))
+    trans_end_time = time.time()
+    # enumerate the transfered list
+    test_start_time = time.time()
+    cnt = 0
+    for i, (idx, label) in enumerate(train_data_list):
+        cnt += 1
+    test_end_time = time.time()
+    print(
+        "!!!!Train_data_list(with %d items) enumerate latency: %f, transfer latency: %f"
+        % (cnt, (test_end_time - test_start_time), (trans_end_time - trans_start_time)) 
+    )
+    comm.synchronize()
+
+    torch.cuda.synchronize()
+    train_start_time = time.time()
+    skip_epoch_time = time.time()
+    latency_s = 0
+    latency_e = 0
+    latency_t = 0
+    latency_total = 0
+    for epoch in range(options.epochs):
+        if epoch == options.skip_epoch:
+            torch.cuda.synchronize()
+            skip_epoch_time = time.time()
+            latency_s = 0
+            latency_e = 0
+            latency_t = 0
         for i, (idx, label) in enumerate(train_dataloader):
-            if train_step >= total_steps:
-                break
-            
-            label = torch.reshape(label, (-1,)).cuda()
-            optimizer.zero_grad()
-            model.train()
-
+            torch.cuda.synchronize()
+            step_start_time = time.time()
             if options.use_amp:
                 with autocast(enabled=options.use_amp):
-                    logits = model(idx)
+                    logits, time_info = model(idx)
+                    label = torch.reshape(label, (-1,)).cuda()
+                    optimizer.zero_grad()
                     loss = loss_fcn(logits, label)
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                logits = model(idx)
+                logits, time_info = model(idx)
+                label = torch.reshape(label, (-1,)).cuda()
+                optimizer.zero_grad()
                 loss = loss_fcn(logits, label)
                 loss.backward()
                 optimizer.step()
-
-            if comm.get_rank() == 0 and train_step % 100 == 0:
-                print(
-                    "[%s] [LOSS] step=%d, loss=%f"
-                    % (
-                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        train_step,
-                        loss.cpu().item(),
-                    )
+            torch.cuda.synchronize()
+            step_end_time = time.time()
+            latency_s += time_info[0]
+            latency_e += time_info[1]
+            latency_t += (step_end_time - time_info[2])
+            latency_total += (step_end_time - step_start_time)
+            # if comm.get_rank() == 0:
+            #     print(
+            #         "[%s] [LOSS] step=%d, loss=%f, S=%f, E=%f, T=%f, Total=%f"
+            #         % (
+            #             datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
+            #             i, loss.cpu().item(),
+            #             time_info[0], time_info[1], (step_end_time - time_info[2]),
+            #             (step_end_time - step_start_time)
+            #         )
+            #     )
+        if comm.get_rank() == 0:
+            print(
+                "[%s] [LOSS] epoch=%d, loss=%f"
+                % (
+                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    epoch,
+                    loss.cpu().item(),
                 )
-            train_step = train_step + 1
-        epoch = epoch + 1
-    comm.synchronize()
+            )
+    torch.cuda.synchronize()
     train_end_time = time.time()
-    train_time = train_end_time - train_start_time
+    
+    comm.synchronize()
     if comm.get_rank() == 0:
         print(
-            "[%s] [TRAIN_TIME] train time is %.2f seconds"
-            % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), train_time)
+            "[TRAIN_TIME] train time is %.6f seconds"
+            % (train_end_time - train_start_time)
         )
-        if options.epochs <= comm.get_world_size():
-            print(
-                "[EPOCH_TIME] %.2f seconds, maybe large due to not enough epoch skipped."
-                % ((train_end_time - train_start_time) / options.epochs,)
+        print(
+            "[EPOCH_TIME] %.6f seconds, maybe large due to not enough epoch skipped."
+            % ((train_end_time - train_start_time) / options.epochs)
+        )
+        print(
+            "[EPOCH_TIME] %.6f seconds"
+            % ((train_end_time - skip_epoch_time) / (options.epochs - options.skip_epoch))
+        )
+        print(
+            "[STEP_TIME] S = %.6f seconds, E = %.6f seconds, T = %.6f seconds"
+            % (
+                (latency_s / profile_steps),
+                (latency_e / profile_steps),
+                (latency_t / profile_steps)
             )
-            print(
-                "[EPOCH_TIME] %.2f seconds"
-                % (
-                    (train_end_time - skip_world_size_epoch_time)
-                    / (options.epochs - comm.get_world_size()),
-                )
-            )
+        )
     valid(valid_dataloader, model)
 
 

@@ -1122,6 +1122,11 @@ class NodeClassificationDataset(Dataset):
         self.dataset = list(
             list(zip(raw_data["idx"], raw_data["label"].astype(np.int64)))
         )
+        dataset_len = (len(self.dataset) + global_size - 1) // global_size
+        start_idx = dataset_len * global_rank
+        end_idx = min(dataset_len * (global_rank + 1), len(self.dataset))
+        self.dataset = self.dataset[start_idx: end_idx]
+        # print(f"[GPU{global_rank}]: dataset_size = {len(self.dataset)}, first item = {self.dataset[0]}")
 
     def __getitem__(self, index):
         return self.dataset[index]
