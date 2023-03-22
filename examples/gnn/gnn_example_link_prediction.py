@@ -18,6 +18,8 @@ from optparse import OptionParser
 
 import apex
 import torch
+import torch.nn as nn
+import torch.optim as optim
 import torch.nn.functional as F
 import torchmetrics.functional as MF
 from apex.parallel import DistributedDataParallel as DDP
@@ -125,10 +127,10 @@ elif options.framework == "wg":
     from wg_torch.gnn.GATConv import GATConv
 
 
-def create_gnn_layers(in_feat_dim, hidden_feat_dim, num_layer, num_head):
+def create_gnn_layers(in_feat_dim, hidden_feat_dim, class_count, num_layer, num_head):
     gnn_layers = torch.nn.ModuleList()
     for i in range(num_layer):
-        layer_output_dim = hidden_feat_dim // num_head
+        layer_output_dim = (hidden_feat_dim // num_head if i != num_layer - 1 else class_count)        
         layer_input_dim = in_feat_dim if i == 0 else hidden_feat_dim
         mean_output = True if i == num_layer - 1 else False
         if options.framework == "pyg":
@@ -251,32 +253,37 @@ def layer_forward(layer, x_feat, x_target_feat, sub_graph):
         x_feat = layer(sub_graph[0], sub_graph[1], sub_graph[2], x_feat, x_target_feat)
     return x_feat
 
+class DotPredictor(nn.Module):
+    def forward(self, h_src, h_dst):
+        return (h_src * h_dst).sum(1)
 
 class EdgePredictionGNNModel(torch.nn.Module):
     def __init__(
-        self, graph: graph_ops.HomoGraph, num_layer, hidden_feat_dim, max_neighbors: str
+        self,
+        graph: graph_ops.HomoGraph,
+        num_layer,
+        hidden_feat_dim,
+        class_count,
+        max_neighbors: str,
+        predictor
     ):
         super().__init__()
         self.graph = graph
         self.num_layer = num_layer
         self.hidden_feat_dim = hidden_feat_dim
         self.max_neighbors = parse_max_neighbors(num_layer, max_neighbors)
+        self.class_count = class_count
         num_head = options.heads if (options.model == "gat") else 1
         assert hidden_feat_dim % num_head == 0
         in_feat_dim = self.graph.node_feat_shape()[1]
         self.gnn_layers = create_gnn_layers(
-            in_feat_dim, hidden_feat_dim, num_layer, num_head
+            in_feat_dim, hidden_feat_dim, class_count, num_layer, num_head
         )
         self.mean_output = True if options.model == "gat" else False
         self.add_self_loop = True if options.model == "gat" else False
         self.gather_fn = embedding_ops.EmbeddingLookUpModule(need_backward=False)
-        self.predictor = torch.nn.Sequential(
-            torch.nn.Linear(hidden_feat_dim, hidden_feat_dim),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_feat_dim, hidden_feat_dim),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_feat_dim, 1),
-        )
+        self.dropout = nn.Dropout(options.dropout)
+        self.predictor = predictor
 
     def gnn_forward(self, ids, exclude_edge_hashset=None):
         ids = ids.to(self.graph.id_type()).cuda()
@@ -309,7 +316,7 @@ class EdgePredictionGNNModel(torch.nn.Module):
                 if options.framework == "dgl":
                     x_feat = x_feat.flatten(1)
                 x_feat = F.relu(x_feat)
-                # x_feat = F.dropout(x_feat, options.dropout, training=self.training)
+                x_feat = self.dropout(x_feat)
         if options.framework == "dgl" and self.mean_output:
             out_feat = x_feat.mean(1)
         else:
@@ -317,87 +324,7 @@ class EdgePredictionGNNModel(torch.nn.Module):
         return out_feat
 
     def predict(self, h_src, h_dst):
-        return self.predictor(h_src * h_dst)
-
-    def fullbatch_single_layer_forward(
-        self, dist_homo_graph, i, input_feat, output_feat, batch_size
-    ):
-        start_node_id = (
-            dist_homo_graph.node_count
-            * wg.get_rank(dist_homo_graph.wm_comm)
-            // wg.get_size(dist_homo_graph.wm_comm)
-        )
-        end_node_id = (
-            dist_homo_graph.node_count
-            * (wg.get_rank(dist_homo_graph.wm_comm) + 1)
-            // wg.get_size(dist_homo_graph.wm_comm)
-        )
-        min_node_count = dist_homo_graph.node_count // wg.get_size(
-            dist_homo_graph.wm_comm
-        )
-        total_node_count = end_node_id - start_node_id
-        batch_count = max((min_node_count + batch_size - 1) // batch_size, 1)
-        last_batchsize = total_node_count - (batch_count - 1) * batch_size
-        embedding_lookup_fn = embedding_ops.EmbeddingLookupFn.apply
-        for batch_id in range(batch_count):
-            current_batchsize = (
-                last_batchsize if batch_id == batch_count - 1 else batch_size
-            )
-            batch_start_node_id = start_node_id + batch_id * batch_size
-            target_ids = torch.arange(
-                batch_start_node_id,
-                batch_start_node_id + current_batchsize,
-                dtype=dist_homo_graph.edges_csr_col.dtype,
-                device="cuda",
-            )
-            (
-                neighboor_gids_offset,
-                neighboor_gids_vdata,
-                neighboor_src_lids,
-            ) = graph_ops.unweighted_sample_without_replacement_single_layer(
-                target_ids,
-                dist_homo_graph.edges_csr_row,
-                dist_homo_graph.edges_csr_col,
-                -1,
-            )
-            (
-                unique_gids,
-                neighbor_raw_to_unique_mapping,
-                unique_output_neighbor_count,
-            ) = torch.ops.wholegraph.append_unique(target_ids, neighboor_gids_vdata)
-            csr_row_ptr = neighboor_gids_offset
-            csr_col_ind = neighbor_raw_to_unique_mapping
-            sample_dup_count = unique_output_neighbor_count
-            neighboor_count = neighboor_gids_vdata.size()[0]
-            edge_indice_i = torch.cat(
-                [
-                    torch.reshape(neighbor_raw_to_unique_mapping, (1, neighboor_count)),
-                    torch.reshape(neighboor_src_lids, (1, neighboor_count)),
-                ]
-            )
-            target_ids_i = unique_gids
-            x_feat = embedding_lookup_fn(target_ids_i, input_feat)
-            sub_graph = create_sub_graph(
-                target_ids_i,
-                target_ids,
-                edge_indice_i,
-                csr_row_ptr,
-                csr_col_ind,
-                sample_dup_count,
-                self.add_self_loop,
-            )
-            x_target_feat = x_feat[: target_ids.numel()]
-            x_feat = layer_forward(self.gnn_layers[i], x_feat, x_target_feat, sub_graph)
-            if i != self.num_layer - 1:
-                if options.framework == "dgl":
-                    x_feat = x_feat.flatten(1)
-                x_feat = F.relu(x_feat)
-            else:
-                if options.framework == "dgl" and self.mean_output:
-                    x_feat = x_feat.mean(1)
-            embedding_ops.embedding_2d_sub_tensor_assign(
-                x_feat, output_feat, batch_start_node_id
-            )
+        return self.predictor(h_src, h_dst)
 
     def forward(self, src_ids, pos_dst_ids, neg_dst_ids):
         assert src_ids.shape == pos_dst_ids.shape and src_ids.shape == neg_dst_ids.shape
@@ -419,105 +346,10 @@ class EdgePredictionGNNModel(torch.nn.Module):
         return scores[:id_count], scores[id_count:]
 
 
-def compute_mrr(model, node_emb, src, dst, neg_dst, batch_size=1024):
-    rr = torch.zeros(src.shape[0])
-    embedding_lookup_fn = embedding_ops.EmbeddingLookupFn.apply
-    evaluator = Evaluator(name="ogbl-citation2")
-    preds = []
-    for start in range(0, src.shape[0], batch_size):
-        end = min(start + batch_size, src.shape[0])
-        all_dst = torch.cat([dst[start:end, None], neg_dst[start:end]], 1)
-        h_src = embedding_lookup_fn(src[start:end], node_emb)[:, None, :]
-        h_dst = embedding_lookup_fn(all_dst.view(-1), node_emb).view(*all_dst.shape, -1)
-        pred = model.predict(h_src, h_dst).squeeze(-1)
-        relevance = torch.zeros(*pred.shape, dtype=torch.bool)
-        relevance[:, 0] = True
-        rr[start:end] = MF.retrieval_reciprocal_rank(pred, relevance)
-        preds += [pred]
-    all_pred = torch.cat(preds)
-    pos_pred = all_pred[:, :1].squeeze(1)
-    neg_pred = all_pred[:, 1:]
-    ogb_mrr = (
-        evaluator.eval(
-            {
-                "y_pred_pos": pos_pred,
-                "y_pred_neg": neg_pred,
-            }
-        )["mrr_list"]
-        .mean()
-        .item()
-    )
-    return rr.mean().item(), ogb_mrr
-
-
-@torch.no_grad()
-def evaluate(model: EdgePredictionGNNModel, dist_homo_graph, edge_split):
-    global use_chunked
-    global use_host_memory
-    model.eval()
-    embedding = dist_homo_graph.node_feat
-    node_feats = [None, None]
-    wm_tensor_type = get_intra_node_wm_tensor_type(use_chunked, use_host_memory)
-    node_feats[0] = create_wm_tensor(
-        dist_homo_graph.wm_comm,
-        [embedding.shape[0], options.hiddensize],
-        [],
-        embedding.dtype,
-        wm_tensor_type,
-    )
-    if options.layernum > 1:
-        node_feats[1] = create_wm_tensor(
-            dist_homo_graph.wm_comm,
-            [embedding.shape[0], options.hiddensize],
-            [],
-            embedding.dtype,
-            wm_tensor_type,
-        )
-    output_feat = node_feats[0]
-    input_feat = embedding
-    del embedding
-    for i in range(options.layernum):
-        model.fullbatch_single_layer_forward(
-            dist_homo_graph, i, input_feat, output_feat, 1024
-        )
-        wg.barrier(dist_homo_graph.wm_comm)
-        input_feat = output_feat
-        output_feat = node_feats[(i + 1) % 2]
-    del output_feat
-    del node_feats[1]
-    del node_feats[0]
-    del node_feats
-    dgl_mrr_results = []
-    ogb_mrr_results = []
-    for split in ["valid", "test"]:
-        src = torch.from_numpy(edge_split[split]["source_node"]).cuda()
-        dst = torch.from_numpy(edge_split[split]["target_node"]).cuda()
-        neg_dst = torch.from_numpy(edge_split[split]["target_node_neg"]).cuda()
-        dgl_mrr, ogb_mrr = compute_mrr(model, input_feat, src, dst, neg_dst)
-        dgl_mrr_results.append(dgl_mrr)
-        ogb_mrr_results.append(ogb_mrr)
-    return dgl_mrr_results, ogb_mrr_results
-
-
-def train(dist_homo_graph, model, optimizer, raw_model, edge_split):
-    print("start training...")
+def train(dist_homo_graph, model, optimizer):
     train_step = 0
     epoch = 0
     train_start_time = time.time()
-    dgl_mrr, ogb_mrr = evaluate(raw_model, dist_homo_graph, edge_split)
-    if comm.get_rank() == 0:
-        print(
-            "@Epoch",
-            epoch,
-            ", Validation DGL MRR:",
-            dgl_mrr[0],
-            "Test DGL MRR:",
-            dgl_mrr[1],
-            "Validation OGB MRR:",
-            ogb_mrr[0],
-            "Test OGB MRR:",
-            ogb_mrr[1],
-        )
     while epoch < options.epochs:
         epoch_iter_count = dist_homo_graph.start_iter(options.batchsize)
         if comm.get_rank() == 0:
@@ -549,20 +381,6 @@ def train(dist_homo_graph, model, optimizer, raw_model, edge_split):
             train_step = train_step + 1
             iter_id = iter_id + 1
         epoch = epoch + 1
-        dgl_mrr, ogb_mrr = evaluate(raw_model, dist_homo_graph, edge_split)
-        if comm.get_rank() == 0:
-            print(
-                "@Epoch",
-                epoch,
-                ", Validation DGL MRR:",
-                dgl_mrr[0],
-                "Test DGL MRR:",
-                dgl_mrr[1],
-                "Validation OGB MRR:",
-                ogb_mrr[0],
-                "Test OGB MRR:",
-                ogb_mrr[1],
-            )
     comm.synchronize()
     train_end_time = time.time()
     train_time = train_end_time - train_start_time
@@ -607,10 +425,6 @@ def main():
     if comma.Get_rank() == 0:
         print("Framework=%s, Model=%s" % (options.framework, options.model))
 
-    edge_split = graph_ops.load_pickle_link_pred_data(
-        options.root_dir, options.graph_name, True
-    )
-
     dist_homo_graph = graph_ops.HomoGraph()
     global use_chunked
     global use_host_memory
@@ -627,49 +441,36 @@ def main():
         link_pred_task=True,
     )
     print("Rank=%d, Graph loaded." % (comma.Get_rank(),))
-    raw_model = EdgePredictionGNNModel(
-        dist_homo_graph, options.layernum, options.hiddensize, options.neighbors
+    
+    train_device = torch.device('cuda:{:}'.format(comma.Get_rank()))
+    predictor = DotPredictor()
+    model = EdgePredictionGNNModel(
+        dist_homo_graph, options.layernum, options.hiddensize,
+        options.classnum, options.neighbors, predictor
     )
-    print("Rank=%d, model created." % (comma.Get_rank(),))
-    raw_model.cuda()
-    print("Rank=%d, model movded to cuda." % (comma.Get_rank(),))
-    model = DDP(raw_model, delay_allreduce=True)
-    optimizer = apex.optimizers.FusedAdam(
-        model.parameters(), lr=options.lr, weight_decay=5e-4
-    )
-    print("Rank=%d, optimizer created." % (comma.Get_rank(),))
+    model.cuda(device=train_device)
+    model = DDP(model, delay_allreduce=True)
+    optimizer = optim.Adam(list(model.parameters()) + list(predictor.parameters()), lr=options.lr)
 
-    dgl_mrr, ogb_mrr = evaluate(raw_model, dist_homo_graph, edge_split)
-    if comm.get_rank() == 0:
-        print(
-            "Validation DGL MRR:",
-            dgl_mrr[0],
-            "Test DGL MRR:",
-            dgl_mrr[1],
-            "Validation OGB MRR:",
-            ogb_mrr[0],
-            "Test OGB MRR:",
-            ogb_mrr[1],
-        )
+    print("Rank=%d, model and optimizer constructed, begin trainning..." % (comma.Get_rank(),))
 
-    train(dist_homo_graph, model, optimizer, raw_model, edge_split)
-
-    dgl_mrr, ogb_mrr = evaluate(raw_model, dist_homo_graph, edge_split)
-    if comm.get_rank() == 0:
-        print(
-            "Validation DGL MRR:",
-            dgl_mrr[0],
-            "Test DGL MRR:",
-            dgl_mrr[1],
-            "Validation OGB MRR:",
-            ogb_mrr[0],
-            "Test OGB MRR:",
-            ogb_mrr[1],
-        )
+    train(dist_homo_graph, model, optimizer)
 
     wg.finalize_lib()
     print("Rank=%d, wholegraph shutdown." % (comma.Get_rank(),))
 
 
 if __name__ == "__main__":
+    num_class = {
+        'reddit' : 41,
+        'products' : 47,
+        'twitter' : 150,
+        'papers100M' : 172,
+        'uk-2006-05' : 150,
+        'com-friendster' : 100,
+
+        'ogbn-papers100M' : 172,
+        'ogbl-citation2' : 172,
+    }
+    options.classnum = num_class[options.graph_name]
     main()
