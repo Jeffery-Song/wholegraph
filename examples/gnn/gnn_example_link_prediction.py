@@ -37,30 +37,33 @@ parser.add_option(
     "-r",
     "--root_dir",
     dest="root_dir",
-    default="dataset",
+    default="/nvme/songxiaoniu/graph-learning/wholegraph",
+    # default="/dev/shm/dataset",
     help="dataset root directory.",
 )
 parser.add_option(
     "-g", "--graph_name", dest="graph_name", default="ogbl-citation2", help="graph name"
 )
 parser.add_option(
-    "-e", "--epochs", type="int", dest="epochs", default=1, help="number of epochs"
+    "-e", "--epochs", type="int", dest="epochs", default=4, help="number of epochs"
 )
 parser.add_option(
-    "-b", "--batchsize", type="int", dest="batchsize", default=1024, help="batch size"
+    "-b", "--batchsize", type="int", dest="batchsize", default=8000, help="batch size"
 )
+parser.add_option("--skip_epoch", type="int", dest="skip_epoch", default=1, help="num of skip epoch for profile")
+parser.add_option("--local_step", type="int", dest="local_step", default=125, help="num of steps on a GPU in an epoch")
 parser.add_option(
     "-n",
     "--neighbors",
     dest="neighbors",
-    default="15,10,5",
+    default="10,25",
     help="train neighboor sample count",
 )
 parser.add_option(
     "--hiddensize", type="int", dest="hiddensize", default=256, help="hidden size"
 )
 parser.add_option(
-    "-l", "--layernum", type="int", dest="layernum", default=3, help="layer number"
+    "-l", "--layernum", type="int", dest="layernum", default=2, help="layer number"
 )
 parser.add_option(
     "-m",
@@ -73,7 +76,7 @@ parser.add_option(
     "-f",
     "--framework",
     dest="framework",
-    default="wg",
+    default="dgl",
     help="framework type, valid values are: dgl, pyg, wg",
 )
 parser.add_option("--heads", type="int", dest="heads", default=1, help="num heads")
@@ -88,7 +91,7 @@ parser.add_option(
 parser.add_option(
     "-d", "--dropout", type="float", dest="dropout", default=0.5, help="dropout"
 )
-parser.add_option("--lr", type="float", dest="lr", default=0.001, help="learning rate")
+parser.add_option("--lr", type="float", dest="lr", default=0.003, help="learning rate")
 parser.add_option(
     "--use_nccl",
     action="store_true",
@@ -351,9 +354,8 @@ def train(dist_homo_graph, model, optimizer):
     epoch = 0
     train_start_time = time.time()
     while epoch < options.epochs:
-        epoch_iter_count = dist_homo_graph.start_iter(options.batchsize)
-        if comm.get_rank() == 0:
-            print("%d steps for epoch %d." % (epoch_iter_count, epoch))
+        epoch_iter_count = min(options.local_step, dist_homo_graph.start_iter(options.batchsize))
+        if comm.get_rank() == 0: print("%d steps for epoch %d." % (epoch_iter_count, epoch))
         iter_id = 0
         while iter_id < epoch_iter_count:
             src_nid, pos_dst_nid = dist_homo_graph.get_train_edge_batch(iter_id)
@@ -451,7 +453,6 @@ def main():
     model.cuda(device=train_device)
     model = DDP(model, delay_allreduce=True)
     optimizer = optim.Adam(list(model.parameters()) + list(predictor.parameters()), lr=options.lr)
-
     print("Rank=%d, model and optimizer constructed, begin trainning..." % (comma.Get_rank(),))
 
     train(dist_homo_graph, model, optimizer)
