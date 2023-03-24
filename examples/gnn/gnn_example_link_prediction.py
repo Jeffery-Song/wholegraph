@@ -260,6 +260,8 @@ class DotPredictor(nn.Module):
     def forward(self, h_src, h_dst):
         return (h_src * h_dst).sum(1)
 
+sample_node_cnt = 0
+sample_time = 0
 class EdgePredictionGNNModel(torch.nn.Module):
     def __init__(
         self,
@@ -307,6 +309,10 @@ class EdgePredictionGNNModel(torch.nn.Module):
         # x_feat = self.graph.gather(target_gids[0])
         # num_nodes = [target_gid.shape[0] for target_gid in target_gids]
         # print('num_nodes %s' % (num_nodes, ))
+        global sample_node_cnt, sample_time
+        sample_time += 1
+        sample_node_cnt += target_gids[0].shape[0]
+
         for i in range(self.num_layer):
             x_target_feat = x_feat[: target_gids[i + 1].numel()]
             sub_graph = create_sub_graph(
@@ -358,13 +364,15 @@ def train(dist_homo_graph, model, optimizer):
     torch.cuda.synchronize()
     test_start_time = time.time()
     epoch_iter_count = min(options.local_step, dist_homo_graph.start_iter(options.batchsize))
+    torch.cuda.synchronize()
+    iter_start_time = time.time()
     for iter_id in range(epoch_iter_count):
         src_nid, pos_dst_nid = dist_homo_graph.get_train_edge_batch(iter_id)
     torch.cuda.synchronize()
     test_end_time = time.time()
     print(
-        "!!!!dist_homo_graph enumerate latency per epoch: %f, per step: %f"
-        % ((test_end_time - test_start_time), ((test_end_time - test_start_time) / epoch_iter_count))
+        "!!!!dist_homo_graph enumerate latency per epoch: %f, per step: %f(start_iter latency %f)"
+        % ((test_end_time - iter_start_time), ((test_end_time - iter_start_time) / epoch_iter_count), (iter_start_time - test_start_time))
     )
 
     latency_s = 0
@@ -433,6 +441,11 @@ def train(dist_homo_graph, model, optimizer):
                 (latency_e / profile_steps),
                 (latency_t / profile_steps)
             )
+        )
+        global sample_node_cnt, sample_time
+        print(
+            "[STEP_META] average sample node %d"
+            % (sample_node_cnt / sample_time)
         )
 
 
