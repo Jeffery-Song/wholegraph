@@ -299,7 +299,11 @@ class EdgePredictionGNNModel(torch.nn.Module):
         ) = self.graph.unweighted_sample_without_replacement(
             ids, self.max_neighbors, exclude_edge_hashset=exclude_edge_hashset
         )
+        torch.cuda.synchronize()
+        sample_end_time = time.time()
         x_feat = self.gather_fn(target_gids[0], self.graph.node_feat)
+        torch.cuda.synchronize()
+        extract_end_time = time.time()
         # x_feat = self.graph.gather(target_gids[0])
         # num_nodes = [target_gid.shape[0] for target_gid in target_gids]
         # print('num_nodes %s' % (num_nodes, ))
@@ -324,7 +328,7 @@ class EdgePredictionGNNModel(torch.nn.Module):
             out_feat = x_feat.mean(1)
         else:
             out_feat = x_feat
-        return out_feat
+        return out_feat, [sample_end_time, extract_end_time]
 
     def predict(self, h_src, h_dst):
         return self.predictor(h_src, h_dst)
@@ -338,7 +342,7 @@ class EdgePredictionGNNModel(torch.nn.Module):
             torch.cat([src_ids, pos_dst_ids]), torch.cat([pos_dst_ids, src_ids])
         )
         ids_unique, reverse_map = torch.unique(ids, return_inverse=True)
-        out_feat_unique = self.gnn_forward(
+        out_feat_unique, ts = self.gnn_forward(
             ids_unique, exclude_edge_hashset=exclude_edge_hashset
         )
         out_feat = torch.nn.functional.embedding(reverse_map, out_feat_unique)
@@ -346,52 +350,90 @@ class EdgePredictionGNNModel(torch.nn.Module):
         scores = self.predict(
             torch.cat([src_feat, src_feat]), torch.cat([pos_dst_feat, neg_dst_feat])
         )
-        return scores[:id_count], scores[id_count:]
+        return scores, ts
 
 
 def train(dist_homo_graph, model, optimizer):
-    train_step = 0
-    epoch = 0
+    # directly enumerate train_dataloader
+    torch.cuda.synchronize()
+    test_start_time = time.time()
+    epoch_iter_count = min(options.local_step, dist_homo_graph.start_iter(options.batchsize))
+    for iter_id in range(epoch_iter_count):
+        src_nid, pos_dst_nid = dist_homo_graph.get_train_edge_batch(iter_id)
+    torch.cuda.synchronize()
+    test_end_time = time.time()
+    print(
+        "!!!!dist_homo_graph enumerate latency per epoch: %f, per step: %f"
+        % ((test_end_time - test_start_time), ((test_end_time - test_start_time) / epoch_iter_count))
+    )
+
+    latency_s = 0
+    latency_e = 0
+    latency_t = 0
+    profile_steps = (options.epochs - options.skip_epoch) * options.local_step
+    labels = torch.cat([torch.ones(options.batchsize), torch.zeros(options.batchsize)]).cuda()
+    
+    torch.cuda.synchronize()
     train_start_time = time.time()
-    while epoch < options.epochs:
+    for epoch in range(options.epochs):
+        # skip epoch
+        if epoch == options.skip_epoch:
+            torch.cuda.synchronize()
+            skip_epoch_time = time.time()
+            latency_s = 0
+            latency_e = 0
+            latency_t = 0
+
         epoch_iter_count = min(options.local_step, dist_homo_graph.start_iter(options.batchsize))
         if comm.get_rank() == 0: print("%d steps for epoch %d." % (epoch_iter_count, epoch))
-        iter_id = 0
-        while iter_id < epoch_iter_count:
+        
+        for iter_id in range(epoch_iter_count):
+            torch.cuda.synchronize()
+            step_start_time = time.time()
             src_nid, pos_dst_nid = dist_homo_graph.get_train_edge_batch(iter_id)
             # neg_dst_nid = torch.randint_like(src_nid, 0, dist_homo_graph.node_count)
             neg_dst_nid = dist_homo_graph.per_source_negative_sample(src_nid)
+            score, ts = model(src_nid, pos_dst_nid, neg_dst_nid)
             optimizer.zero_grad()
-            model.train()
-            pos_score, neg_score = model(src_nid, pos_dst_nid, neg_dst_nid)
-            pos_label = torch.ones_like(pos_score)
-            neg_label = torch.zeros_like(neg_score)
-            score = torch.cat([pos_score, neg_score])
-            labels = torch.cat([pos_label, neg_label])
             loss = F.binary_cross_entropy_with_logits(score, labels)
             loss.backward()
             optimizer.step()
-            if comm.get_rank() == 0 and train_step % 100 == 0:
-                print(
-                    "[%s] [LOSS] step=%d, loss=%f"
-                    % (
-                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        train_step,
-                        loss.cpu().item(),
-                    )
-                )
-            train_step = train_step + 1
-            iter_id = iter_id + 1
-        epoch = epoch + 1
+
+            # record SET step time
+            torch.cuda.synchronize()
+            step_end_time = time.time()
+            latency_s += (ts[0] - step_start_time)
+            latency_e += (ts[1] - ts[0])
+            latency_t += (step_end_time - ts[1])
+        if comm.get_rank() == 0:
+            print(
+                "[%s] [LOSS] epoch=%d, loss=%f"
+                % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), epoch, loss.cpu().item())
+            )
     comm.synchronize()
+    torch.cuda.synchronize()
     train_end_time = time.time()
-    train_time = train_end_time - train_start_time
     if comm.get_rank() == 0:
         print(
-            "[%s] [TRAIN_TIME] train time is %.2f seconds"
-            % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), train_time)
+            "[TRAIN_TIME] train time is %.6f seconds"
+            % (train_end_time - train_start_time)
         )
-        print("[EPOCH_TIME] %.2f seconds" % (train_time / options.epochs,))
+        print(
+            "[EPOCH_TIME] %.6f seconds, maybe large due to not enough epoch skipped."
+            % ((train_end_time - train_start_time) / options.epochs)
+        )
+        print(
+            "[EPOCH_TIME] %.6f seconds"
+            % ((train_end_time - skip_epoch_time) / (options.epochs - options.skip_epoch))
+        )
+        print(
+            "[STEP_TIME] S = %.6f seconds, E = %.6f seconds, T = %.6f seconds"
+            % (
+                (latency_s / profile_steps),
+                (latency_e / profile_steps),
+                (latency_t / profile_steps)
+            )
+        )
 
 
 def main():
@@ -455,6 +497,7 @@ def main():
     optimizer = optim.Adam(list(model.parameters()) + list(predictor.parameters()), lr=options.lr)
     print("Rank=%d, model and optimizer constructed, begin trainning..." % (comma.Get_rank(),))
 
+    model.train()
     train(dist_homo_graph, model, optimizer)
 
     wg.finalize_lib()
