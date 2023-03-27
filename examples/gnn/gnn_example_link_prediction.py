@@ -42,7 +42,8 @@ parser.add_option(
     help="dataset root directory.",
 )
 parser.add_option(
-    "-g", "--graph_name", dest="graph_name", default="ogbl-citation2", help="graph name"
+    # "-g", "--graph_name", dest="graph_name", default="ogbl-citation2", help="graph name"
+    "-g", "--graph_name", dest="graph_name", default="ogbn-papers100M", help="graph name"
 )
 parser.add_option(
     "-e", "--epochs", type="int", dest="epochs", default=4, help="number of epochs"
