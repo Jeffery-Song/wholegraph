@@ -363,16 +363,17 @@ def train(dist_homo_graph, model, optimizer):
     # directly enumerate train_dataloader
     torch.cuda.synchronize()
     test_start_time = time.time()
-    epoch_iter_count = min(options.local_step, dist_homo_graph.start_iter(options.batchsize))
+    max_total_local_steps = dist_homo_graph.start_iter(options.batchsize)
+    assert(max_total_local_steps > options.local_step * options.epochs)
     torch.cuda.synchronize()
     iter_start_time = time.time()
-    for iter_id in range(epoch_iter_count):
+    for iter_id in range(options.local_step):
         src_nid, pos_dst_nid = dist_homo_graph.get_train_edge_batch(iter_id)
     torch.cuda.synchronize()
     test_end_time = time.time()
     print(
         "!!!!dist_homo_graph enumerate latency per epoch: %f, per step: %f(start_iter latency %f)"
-        % ((test_end_time - iter_start_time), ((test_end_time - iter_start_time) / epoch_iter_count), (iter_start_time - test_start_time))
+        % ((test_end_time - iter_start_time), ((test_end_time - iter_start_time) / options.local_step), (iter_start_time - test_start_time))
     )
 
     latency_s = 0
@@ -391,14 +392,12 @@ def train(dist_homo_graph, model, optimizer):
             latency_s = 0
             latency_e = 0
             latency_t = 0
-
-        epoch_iter_count = min(options.local_step, dist_homo_graph.start_iter(options.batchsize))
-        if comm.get_rank() == 0: print("%d steps for epoch %d." % (epoch_iter_count, epoch))
+        if comm.get_rank() == 0: print("%d steps for epoch %d." % (options.local_step, epoch))
         
-        for iter_id in range(epoch_iter_count):
+        for iter_id in range(options.local_step):
             torch.cuda.synchronize()
             step_start_time = time.time()
-            src_nid, pos_dst_nid = dist_homo_graph.get_train_edge_batch(iter_id)
+            src_nid, pos_dst_nid = dist_homo_graph.get_train_edge_batch(iter_id + epoch * options.local_step)
             # neg_dst_nid = torch.randint_like(src_nid, 0, dist_homo_graph.node_count)
             neg_dst_nid = dist_homo_graph.per_source_negative_sample(src_nid)
             score, ts = model(src_nid, pos_dst_nid, neg_dst_nid)
@@ -530,4 +529,5 @@ if __name__ == "__main__":
         'ogbl-citation2' : 172,
     }
     options.classnum = num_class[options.graph_name]
+    print(options)
     main()
