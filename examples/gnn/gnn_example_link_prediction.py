@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+from torch.cuda.amp import autocast, GradScaler
 import torchmetrics.functional as MF
 from apex.parallel import DistributedDataParallel as DDP
 from mpi4py import MPI
@@ -99,6 +100,13 @@ parser.add_option(
     dest="use_nccl",
     default=False,
     help="whether use nccl for embeddings, default False",
+)
+parser.add_option(
+    "--amp-off",
+    action="store_false",
+    dest="use_amp",
+    default=True,
+    help="whether use amp for training, default True",
 )
 
 (options, args) = parser.parse_args()
@@ -349,6 +357,7 @@ def train(dist_homo_graph, model, optimizer):
     assert(max_total_local_steps > options.local_step * options.epochs)
 
     gather_fn = embedding_ops.EmbeddingLookUpModule(need_backward=False).cuda()   
+    scaler = GradScaler()
    
     # estimate enumerate overhead
     torch.cuda.synchronize()
@@ -411,11 +420,20 @@ def train(dist_homo_graph, model, optimizer):
             extract_end_time = time.time()
 
             # train
-            score = model(id_count, reverse_map, graph_block, x_feat)
-            optimizer.zero_grad()
-            loss = F.binary_cross_entropy_with_logits(score, labels)
-            loss.backward()
-            optimizer.step()
+
+            if options.use_amp:
+                with autocast(enabled=options.use_amp):
+                    score = model(id_count, reverse_map, graph_block, x_feat)
+                    loss = F.binary_cross_entropy_with_logits(score, labels)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                score = model(id_count, reverse_map, graph_block, x_feat)
+                optimizer.zero_grad()
+                loss = F.binary_cross_entropy_with_logits(score, labels)
+                loss.backward()
+                optimizer.step()
 
             # record SET step time
             torch.cuda.synchronize()
