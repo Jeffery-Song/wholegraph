@@ -278,6 +278,7 @@ class EdgePredictionGNNModel(torch.nn.Module):
         self.num_layer = num_layer
         self.hidden_feat_dim = hidden_feat_dim
         self.max_neighbors = parse_max_neighbors(num_layer, max_neighbors)
+        options.max_neighbors = self.max_neighbors
         self.class_count = class_count
         num_head = options.heads if (options.model == "gat") else 1
         assert hidden_feat_dim % num_head == 0
@@ -287,29 +288,19 @@ class EdgePredictionGNNModel(torch.nn.Module):
         )
         self.mean_output = True if options.model == "gat" else False
         self.add_self_loop = True if options.model == "gat" else False
-        self.gather_fn = embedding_ops.EmbeddingLookUpModule(need_backward=False)
         self.dropout = nn.Dropout(options.dropout)
         self.predictor = predictor
 
-    def gnn_forward(self, ids, exclude_edge_hashset=None):
-        ids = ids.to(self.graph.id_type()).cuda()
+    def gnn_forward(self, graph_block, x_feat):
         (
             target_gids,
             edge_indice,
             csr_row_ptrs,
             csr_col_inds,
             sample_dup_counts,
-        ) = self.graph.unweighted_sample_without_replacement(
-            ids, self.max_neighbors, exclude_edge_hashset=exclude_edge_hashset
-        )
-        torch.cuda.synchronize()
-        sample_end_time = time.time()
-        x_feat = self.gather_fn(target_gids[0], self.graph.node_feat)
-        torch.cuda.synchronize()
-        extract_end_time = time.time()
-        # x_feat = self.graph.gather(target_gids[0])
-        # num_nodes = [target_gid.shape[0] for target_gid in target_gids]
-        # print('num_nodes %s' % (num_nodes, ))
+        ) = graph_block
+                
+        # record sample node cnt
         global sample_node_cnt, sample_time
         sample_time += 1
         sample_node_cnt += target_gids[0].shape[0]
@@ -335,29 +326,19 @@ class EdgePredictionGNNModel(torch.nn.Module):
             out_feat = x_feat.mean(1)
         else:
             out_feat = x_feat
-        return out_feat, [sample_end_time, extract_end_time]
+        return out_feat
 
     def predict(self, h_src, h_dst):
         return self.predictor(h_src, h_dst)
 
-    def forward(self, src_ids, pos_dst_ids, neg_dst_ids):
-        assert src_ids.shape == pos_dst_ids.shape and src_ids.shape == neg_dst_ids.shape
-        id_count = src_ids.size(0)
-        ids = torch.cat([src_ids, pos_dst_ids, neg_dst_ids])
-        # add both forward and reverse edge into hashset
-        exclude_edge_hashset = torch.ops.wholegraph.create_edge_hashset(
-            torch.cat([src_ids, pos_dst_ids]), torch.cat([pos_dst_ids, src_ids])
-        )
-        ids_unique, reverse_map = torch.unique(ids, return_inverse=True)
-        out_feat_unique, ts = self.gnn_forward(
-            ids_unique, exclude_edge_hashset=exclude_edge_hashset
-        )
+    def forward(self, id_count, reverse_map, graph_block, x_feat):
+        out_feat_unique = self.gnn_forward(graph_block, x_feat)
         out_feat = torch.nn.functional.embedding(reverse_map, out_feat_unique)
         src_feat, pos_dst_feat, neg_dst_feat = torch.split(out_feat, id_count)
         scores = self.predict(
             torch.cat([src_feat, src_feat]), torch.cat([pos_dst_feat, neg_dst_feat])
         )
-        return scores, ts
+        return scores
 
 
 def train(dist_homo_graph, model, optimizer):
@@ -366,6 +347,10 @@ def train(dist_homo_graph, model, optimizer):
     test_start_time = time.time()
     max_total_local_steps = dist_homo_graph.start_iter(options.batchsize)
     assert(max_total_local_steps > options.local_step * options.epochs)
+
+    gather_fn = embedding_ops.EmbeddingLookUpModule(need_backward=False).cuda()   
+   
+    # estimate enumerate overhead
     torch.cuda.synchronize()
     iter_start_time = time.time()
     for iter_id in range(options.local_step):
@@ -398,10 +383,35 @@ def train(dist_homo_graph, model, optimizer):
         for iter_id in range(options.local_step):
             torch.cuda.synchronize()
             step_start_time = time.time()
+
+            # get pos edges and neg edges
             src_nid, pos_dst_nid = dist_homo_graph.get_train_edge_batch(iter_id + epoch * options.local_step)
-            # neg_dst_nid = torch.randint_like(src_nid, 0, dist_homo_graph.node_count)
             neg_dst_nid = dist_homo_graph.per_source_negative_sample(src_nid)
-            score, ts = model(src_nid, pos_dst_nid, neg_dst_nid)
+            assert src_nid.shape == pos_dst_nid.shape and src_nid.shape == neg_dst_nid.shape
+            id_count = src_nid.size(0)
+            ids = torch.cat([src_nid, pos_dst_nid, neg_dst_nid])
+            # add both forward and reverse edge into hashset
+            exclude_edge_hashset = torch.ops.wholegraph.create_edge_hashset(
+                torch.cat([src_nid, pos_dst_nid]), torch.cat([pos_dst_nid, src_nid])
+            )
+            ids_unique, reverse_map = torch.unique(ids, return_inverse=True)
+
+            # sample
+            ids_unique = ids_unique.to(dist_homo_graph.id_type()).cuda()
+            graph_block = dist_homo_graph.unweighted_sample_without_replacement(
+                ids_unique, options.max_neighbors, exclude_edge_hashset=exclude_edge_hashset
+            )
+            torch.cuda.synchronize()
+            sample_end_time = time.time()
+
+            # extract
+            (target_gids, _, _, _, _) = graph_block
+            x_feat = gather_fn(target_gids[0], dist_homo_graph.node_feat)
+            torch.cuda.synchronize()
+            extract_end_time = time.time()
+
+            # train
+            score = model(id_count, reverse_map, graph_block, x_feat)
             optimizer.zero_grad()
             loss = F.binary_cross_entropy_with_logits(score, labels)
             loss.backward()
@@ -410,9 +420,9 @@ def train(dist_homo_graph, model, optimizer):
             # record SET step time
             torch.cuda.synchronize()
             step_end_time = time.time()
-            latency_s += (ts[0] - step_start_time)
-            latency_e += (ts[1] - ts[0])
-            latency_t += (step_end_time - ts[1])
+            latency_s += (sample_end_time - step_start_time)
+            latency_e += (extract_end_time - sample_end_time)
+            latency_t += (step_end_time - extract_end_time)
         if comm.get_rank() == 0:
             print(
                 "[%s] [LOSS] epoch=%d, loss=%f"
