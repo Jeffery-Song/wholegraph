@@ -473,7 +473,7 @@ def train(train_data, valid_data, model, optimizer):
             latency_s = 0
             latency_e = 0
             latency_t = 0
-        for i, (idx, label) in enumerate(train_dataloader):
+        for i, (idx, label) in enumerate(train_data_list):
             torch.cuda.synchronize()
             step_start_time = time.time()
             if options.use_amp:
