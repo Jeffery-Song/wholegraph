@@ -72,10 +72,10 @@ struct NCCLTensorImpl : public c10::intrusive_ptr_target {
     return sizes_and_strides_.size();
   }
   torch::IntArrayRef sizes() const {
-    return sizes_and_strides_.sizes_arrayref();
+    return asIntArrayRefUnchecked(sizes_and_strides_.sizes_arrayref());
   }
   torch::IntArrayRef strides() const {
-    return sizes_and_strides_.strides_arrayref();
+    return asIntArrayRefUnchecked(sizes_and_strides_.strides_arrayref());
   }
   int64_t size(int64_t d) const {
     return sizes()[d];
