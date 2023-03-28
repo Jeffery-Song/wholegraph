@@ -304,6 +304,7 @@ class HomoGNNModel(torch.nn.Module):
         self.num_layer = num_layer
         self.hidden_feat_dim = hidden_feat_dim
         self.max_neighbors = parse_max_neighbors(num_layer, max_neighbors)
+        options.max_neighbors = self.max_neighbors
         self.class_count = class_count
         num_head = options.heads if (options.model == "gat") else 1
         assert hidden_feat_dim % num_head == 0
@@ -313,26 +314,16 @@ class HomoGNNModel(torch.nn.Module):
         )
         self.mean_output = True if options.model == "gat" else False
         self.add_self_loop = True if options.model == "gat" else False
-        self.gather_fn = embedding_ops.EmbeddingLookUpModule(need_backward=False)
         self.dropout = nn.Dropout(options.dropout)
 
-    def forward(self, ids):
-        torch.cuda.synchronize()
-        step_start_time = time.time()
-        ids = ids.to(self.graph.id_type()).cuda()
+    def forward(self, graph_block, x_feat):
         (
             target_gids,
             edge_indice,
             csr_row_ptrs,
             csr_col_inds,
             sample_dup_counts,
-        ) = self.graph.unweighted_sample_without_replacement(ids, self.max_neighbors)
-        torch.cuda.synchronize()
-        sample_end_time = time.time()
-        x_feat = self.gather_fn(target_gids[0], self.graph.node_feat)
-        torch.cuda.synchronize()
-        extract_end_time = time.time()
-        # x_feat = self.graph.gather(target_gids[0])
+        ) = graph_block
         for i in range(self.num_layer):
             x_target_feat = x_feat[: target_gids[i + 1].numel()]
             sub_graph = create_sub_graph(
@@ -354,9 +345,7 @@ class HomoGNNModel(torch.nn.Module):
             out_feat = x_feat.mean(1)
         else:
             out_feat = x_feat
-        latency_s = (sample_end_time - step_start_time)
-        latency_e = (extract_end_time - sample_end_time)
-        return out_feat, (latency_s, latency_e, extract_end_time)
+        return out_feat
 
 
 def valid_test(dataloader, model, name):
@@ -410,7 +399,7 @@ def create_valid_dataset(data_tensor_dict):
     )
 
 
-def train(train_data, valid_data, model, optimizer):
+def train(train_data, valid_data, dist_homo_graph, model):
     if comm.get_rank() == 0:
         print("start training...")
     train_dataloader = create_train_dataset(
@@ -427,7 +416,10 @@ def train(train_data, valid_data, model, optimizer):
                 total_steps,
             )
         )
-    loss_fcn = torch.nn.CrossEntropyLoss()
+    
+    gather_fn = embedding_ops.EmbeddingLookUpModule(need_backward=False).cuda()
+    optimizer = optim.Adam(model.parameters(), lr=options.lr)
+    loss_fcn = torch.nn.CrossEntropyLoss().cuda()
     scaler = GradScaler()
     model.train()
 
@@ -476,9 +468,23 @@ def train(train_data, valid_data, model, optimizer):
         for i, (idx, label) in enumerate(train_data_list):
             torch.cuda.synchronize()
             step_start_time = time.time()
+
+            # sample
+            ids = idx.to(dist_homo_graph.id_type()).cuda()
+            graph_block = dist_homo_graph.unweighted_sample_without_replacement(ids, options.max_neighbors)
+            torch.cuda.synchronize()
+            sample_end_time = time.time()
+
+            # extract
+            (target_gids, _, _, _, _) = graph_block
+            x_feat = gather_fn(target_gids[0], dist_homo_graph.node_feat)
+            torch.cuda.synchronize()
+            extract_end_time = time.time()
+
+            # train
             if options.use_amp:
                 with autocast(enabled=options.use_amp):
-                    logits, time_info = model(idx)
+                    logits = model(graph_block, x_feat)
                     label = torch.reshape(label, (-1,)).cuda()
                     optimizer.zero_grad()
                     loss = loss_fcn(logits, label)
@@ -486,7 +492,7 @@ def train(train_data, valid_data, model, optimizer):
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                logits, time_info = model(idx)
+                logits = model(graph_block, x_feat)
                 label = torch.reshape(label, (-1,)).cuda()
                 optimizer.zero_grad()
                 loss = loss_fcn(logits, label)
@@ -494,20 +500,12 @@ def train(train_data, valid_data, model, optimizer):
                 optimizer.step()
             torch.cuda.synchronize()
             step_end_time = time.time()
-            latency_s += time_info[0]
-            latency_e += time_info[1]
-            latency_t += (step_end_time - time_info[2])
+
+            # SET time profile
+            latency_s += (sample_end_time - step_start_time)
+            latency_e += (extract_end_time - sample_end_time)
+            latency_t += (step_end_time - extract_end_time)
             latency_total += (step_end_time - step_start_time)
-            # if comm.get_rank() == 0:
-            #     print(
-            #         "[%s] [LOSS] step=%d, loss=%f, S=%f, E=%f, T=%f, Total=%f"
-            #         % (
-            #             datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
-            #             i, loss.cpu().item(),
-            #             time_info[0], time_info[1], (step_end_time - time_info[2]),
-            #             (step_end_time - step_start_time)
-            #         )
-            #     )
         if comm.get_rank() == 0:
             print(
                 "[%s] [LOSS] epoch=%d, loss=%f"
@@ -542,7 +540,7 @@ def train(train_data, valid_data, model, optimizer):
                 (latency_t / profile_steps)
             )
         )
-    valid(valid_dataloader, model)
+    # valid(valid_dataloader, model)
 
 
 def main():
@@ -605,11 +603,9 @@ def main():
     model.cuda()
     print("Rank=%d, model movded to cuda." % (comma.Get_rank(),))
     model = DDP(model, delay_allreduce=True)
-    optimizer = optim.Adam(model.parameters(), lr=options.lr)
-    print("Rank=%d, optimizer created." % (comma.Get_rank(),))
 
-    train(train_data, valid_data, model, optimizer)
-    test(test_data, model)
+    train(train_data, valid_data, dist_homo_graph, model)
+    # test(test_data, model)
 
     wg.finalize_lib()
     print("Rank=%d, wholegraph shutdown." % (comma.Get_rank(),))
