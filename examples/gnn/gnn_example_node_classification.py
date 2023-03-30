@@ -16,14 +16,14 @@ import os
 import time
 from optparse import OptionParser
 
-import apex
+import sys
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.cuda.amp import autocast, GradScaler
 from apex.parallel import DistributedDataParallel as DDP
-from mpi4py import MPI
+import dgl.multiprocessing as mp
 from torch.utils.data import DataLoader
 from wg_torch import comm as comm
 from wg_torch import embedding_ops as embedding_ops
@@ -33,6 +33,9 @@ from wg_torch.wm_tensor import *
 from wholegraph.torch import wholegraph_pytorch as wg
 
 parser = OptionParser()
+parser.add_option(
+    "-c", "--num_workers", type="int", dest="num_workers", default=8, help="number of workers"
+)
 parser.add_option(
     "-r",
     "--root_dir",
@@ -336,7 +339,7 @@ class HomoGNNModel(torch.nn.Module):
 def valid_test(dataloader, model, name):
     total_correct = 0
     total_valid_sample = 0
-    if comm.get_rank() == 0:
+    if options.worker_id == 0:
         print("%s..." % (name,))
     for i, (idx, label) in enumerate(dataloader):
         label = torch.reshape(label, (-1,)).cuda()
@@ -346,7 +349,7 @@ def valid_test(dataloader, model, name):
         correct = (pred == label).sum()
         total_correct += correct.cpu()
         total_valid_sample += label.shape[0]
-    if comm.get_rank() == 0:
+    if options.worker_id == 0:
         print(
             "[%s] [%s] accuracy=%5.2f%%"
             % (
@@ -385,15 +388,15 @@ def create_valid_dataset(data_tensor_dict):
 
 
 def train(train_data, valid_data, dist_homo_graph, model):
-    if comm.get_rank() == 0:
+    if options.worker_id == 0:
         print("start training...")
     train_dataloader = create_train_dataset(
-        data_tensor_dict=train_data, rank=comm.get_rank(), size=comm.get_world_size()
+        data_tensor_dict=train_data, rank=options.worker_id, size=options.num_workers
     )
     valid_dataloader = create_valid_dataset(data_tensor_dict=valid_data)
     total_steps = options.epochs* options.local_step
     profile_steps = (options.epochs - options.skip_epoch) * options.local_step
-    if comm.get_rank() == 0:
+    if options.worker_id == 0:
         print(
             "epoch=%d total_steps=%d"
             % (
@@ -434,7 +437,7 @@ def train(train_data, valid_data, dist_homo_graph, model):
         "!!!!Train_data_list(with %d items) enumerate latency: %f, transfer latency: %f"
         % (cnt, (test_end_time - test_start_time), (trans_end_time - trans_start_time)) 
     )
-    comm.synchronize()
+    options.global_barrier.wait()
 
     torch.cuda.synchronize()
     train_start_time = time.time()
@@ -502,7 +505,7 @@ def train(train_data, valid_data, dist_homo_graph, model):
             latency_e += (extract_end_time - sample_end_time)
             latency_t += (step_end_time - extract_end_time)
             latency_total += (step_end_time - step_start_time)
-        if comm.get_rank() == 0:
+        if options.worker_id == 0:
             print(
                 "[%s] [LOSS] epoch=%d, loss=%f"
                 % (
@@ -514,8 +517,8 @@ def train(train_data, valid_data, dist_homo_graph, model):
     torch.cuda.synchronize()
     train_end_time = time.time()
     
-    comm.synchronize()
-    if comm.get_rank() == 0:
+    options.global_barrier.wait()
+    if options.worker_id == 0:
         print(
             "[TRAIN_TIME] train time is %.6f seconds"
             % (train_end_time - train_start_time)
@@ -539,37 +542,39 @@ def train(train_data, valid_data, dist_homo_graph, model):
     # valid(valid_dataloader, model)
 
 
-def main():
+def main(opt):
+    global options
+    options = opt
+    print(options)
+
     wg.init_lib()
     torch.set_num_threads(1)
-    comma = MPI.COMM_WORLD
-    shared_comma = comma.Split_type(MPI.COMM_TYPE_SHARED)
-    os.environ["RANK"] = str(comma.Get_rank())
-    os.environ["WORLD_SIZE"] = str(comma.Get_size())
+    os.environ["RANK"] = str(options.worker_id)
+    os.environ["WORLD_SIZE"] = str(options.num_workers)
     # slurm in Selene has MASTER_ADDR env
     if "MASTER_ADDR" not in os.environ:
         os.environ["MASTER_ADDR"] = "localhost"
     if "MASTER_PORT" not in os.environ:
         os.environ["MASTER_PORT"] = "12335"
-    local_rank = shared_comma.Get_rank()
-    local_size = shared_comma.Get_size()
-    print("Rank=%d, local_rank=%d" % (local_rank, comma.Get_rank()))
+    local_rank = options.worker_id
+    local_size = options.num_workers
+    print("Rank=%d, local_rank=%d" % (local_rank, options.worker_id))
     dev_count = torch.cuda.device_count()
     assert dev_count > 0
     assert local_size <= dev_count
     torch.cuda.set_device(local_rank)
     torch.distributed.init_process_group(backend="nccl", init_method="env://")
     wm_comm = create_intra_node_communicator(
-        comma.Get_rank(), comma.Get_size(), local_size
+        options.worker_id, options.num_workers, local_size
     )
     wm_embedding_comm = None
     if options.use_nccl:
-        if comma.Get_rank() == 0:
+        if options.worker_id == 0:
             print("Using nccl embeddings.")
         wm_embedding_comm = create_global_communicator(
-            comma.Get_rank(), comma.Get_size()
+            options.worker_id, options.num_workers
         )
-    if comma.Get_rank() == 0:
+    if options.worker_id == 0:
         print("Framework=%s, Model=%s" % (options.framework, options.model))
 
     train_data, valid_data, test_data = graph_ops.load_pickle_data(
@@ -587,7 +592,7 @@ def main():
         use_host_memory,
         wm_embedding_comm,
     )
-    print("Rank=%d, Graph loaded." % (comma.Get_rank(),))
+    print("Rank=%d, Graph loaded." % (options.worker_id,))
     model = HomoGNNModel(
         dist_homo_graph,
         options.layernum,
@@ -595,16 +600,16 @@ def main():
         options.classnum,
         options.neighbors,
     )
-    print("Rank=%d, model created." % (comma.Get_rank(),))
+    print("Rank=%d, model created." % (options.worker_id,))
     model.cuda()
-    print("Rank=%d, model movded to cuda." % (comma.Get_rank(),))
+    print("Rank=%d, model movded to cuda." % (options.worker_id,))
     model = DDP(model, delay_allreduce=True)
 
     train(train_data, valid_data, dist_homo_graph, model)
     # test(test_data, model)
 
     wg.finalize_lib()
-    print("Rank=%d, wholegraph shutdown." % (comma.Get_rank(),))
+    print("Rank=%d, wholegraph shutdown." % (options.worker_id,))
 
 
 if __name__ == "__main__":
@@ -618,5 +623,25 @@ if __name__ == "__main__":
         'com-friendster' : 100
     }
     options.classnum = num_class[options.graph_name]
-    print(options)
-    main()
+
+    num_workers = options.num_workers
+    # global barrier is used to sync all the sample workers and train workers
+    options.global_barrier = mp.Barrier(num_workers, timeout=300.0)
+
+    # fork child processes
+    workers = []
+    for worker_id in range(num_workers):
+        options.worker_id = worker_id
+        p = mp.Process(target=main, args=(options, ))
+        p.start()
+        workers.append(p)
+
+    ret = wg.wait_one_child()
+    if ret != 0:
+        for p in workers:
+            p.kill()
+    for p in workers:
+        p.join()
+
+    if ret != 0:
+        sys.exit(1)

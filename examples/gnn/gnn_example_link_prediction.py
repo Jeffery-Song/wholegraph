@@ -16,16 +16,16 @@ import os
 import time
 from optparse import OptionParser
 
-import apex
+import sys
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.cuda.amp import autocast, GradScaler
-import torchmetrics.functional as MF
+# import torchmetrics.functional as MF
 from apex.parallel import DistributedDataParallel as DDP
-from mpi4py import MPI
-from ogb.linkproppred import Evaluator
+import dgl.multiprocessing as mp
+# from ogb.linkproppred import Evaluator
 from wg_torch import comm as comm
 from wg_torch import embedding_ops as embedding_ops
 from wg_torch import graph_ops as graph_ops
@@ -34,6 +34,9 @@ from wg_torch.wm_tensor import *
 from wholegraph.torch import wholegraph_pytorch as wg
 
 parser = OptionParser()
+parser.add_option(
+    "-c", "--num_workers", type="int", dest="num_workers", default=8, help="number of workers"
+)
 parser.add_option(
     "-r",
     "--root_dir",
@@ -365,7 +368,7 @@ def train(dist_homo_graph, model, optimizer):
             latency_s = 0
             latency_e = 0
             latency_t = 0
-        if comm.get_rank() == 0: print("%d steps for epoch %d." % (options.local_step, epoch))
+        if options.worker_id == 0: print("%d steps for epoch %d." % (options.local_step, epoch))
         
         for iter_id in range(options.local_step):
             torch.cuda.synchronize()
@@ -432,15 +435,15 @@ def train(dist_homo_graph, model, optimizer):
             latency_s += (sample_end_time - step_start_time)
             latency_e += (extract_end_time - sample_end_time)
             latency_t += (step_end_time - extract_end_time)
-        if comm.get_rank() == 0:
+        if options.worker_id == 0:
             print(
                 "[%s] [LOSS] epoch=%d, loss=%f"
                 % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), epoch, loss.cpu().item())
             )
-    comm.synchronize()
+    options.global_barrier.wait()
     torch.cuda.synchronize()
     train_end_time = time.time()
-    if comm.get_rank() == 0:
+    if options.worker_id == 0:
         print(
             "[TRAIN_TIME] train time is %.6f seconds"
             % (train_end_time - train_start_time)
@@ -467,37 +470,39 @@ def train(dist_homo_graph, model, optimizer):
         )
 
 
-def main():
+def main(opt):
+    global options
+    options = opt
+    print(options)
+
     wg.init_lib()
     torch.set_num_threads(1)
-    comma = MPI.COMM_WORLD
-    shared_comma = comma.Split_type(MPI.COMM_TYPE_SHARED)
-    os.environ["RANK"] = str(comma.Get_rank())
-    os.environ["WORLD_SIZE"] = str(comma.Get_size())
+    os.environ["RANK"] = str(options.worker_id)
+    os.environ["WORLD_SIZE"] = str(options.num_workers)
     # slurm in Selene has MASTER_ADDR env
     if "MASTER_ADDR" not in os.environ:
         os.environ["MASTER_ADDR"] = "localhost"
     if "MASTER_PORT" not in os.environ:
         os.environ["MASTER_PORT"] = "12335"
-    local_rank = shared_comma.Get_rank()
-    local_size = shared_comma.Get_size()
-    print("Rank=%d, local_rank=%d" % (local_rank, comma.Get_rank()))
+    local_rank = options.worker_id
+    local_size = options.num_workers
+    print("Rank=%d, local_rank=%d" % (local_rank, options.worker_id))
     dev_count = torch.cuda.device_count()
     assert dev_count > 0
     assert local_size <= dev_count
     torch.cuda.set_device(local_rank)
     torch.distributed.init_process_group(backend="nccl", init_method="env://")
     wm_comm = create_intra_node_communicator(
-        comma.Get_rank(), comma.Get_size(), local_size
+        options.worker_id, options.num_workers, local_size
     )
     wm_embedding_comm = None
     if options.use_nccl:
-        if comma.Get_rank() == 0:
+        if options.worker_id == 0:
             print("Using nccl embeddings.")
         wm_embedding_comm = create_global_communicator(
-            comma.Get_rank(), comma.Get_size()
+            options.worker_id, options.num_workers
         )
-    if comma.Get_rank() == 0:
+    if options.worker_id == 0:
         print("Framework=%s, Model=%s" % (options.framework, options.model))
 
     dist_homo_graph = graph_ops.HomoGraph()
@@ -515,9 +520,9 @@ def main():
         ignore_embeddings=None,
         link_pred_task=True,
     )
-    print("Rank=%d, Graph loaded." % (comma.Get_rank(),))
+    print("Rank=%d, Graph loaded." % (options.worker_id,))
     
-    train_device = torch.device('cuda:{:}'.format(comma.Get_rank()))
+    train_device = torch.device('cuda:{:}'.format(options.worker_id))
     predictor = DotPredictor()
     model = EdgePredictionGNNModel(
         dist_homo_graph, options.layernum, options.hiddensize,
@@ -526,13 +531,13 @@ def main():
     model.cuda(device=train_device)
     model = DDP(model, delay_allreduce=True)
     optimizer = optim.Adam(list(model.parameters()) + list(predictor.parameters()), lr=options.lr)
-    print("Rank=%d, model and optimizer constructed, begin trainning..." % (comma.Get_rank(),))
+    print("Rank=%d, model and optimizer constructed, begin trainning..." % (options.worker_id,))
 
     model.train()
     train(dist_homo_graph, model, optimizer)
 
     wg.finalize_lib()
-    print("Rank=%d, wholegraph shutdown." % (comma.Get_rank(),))
+    print("Rank=%d, wholegraph shutdown." % (options.worker_id,))
 
 
 if __name__ == "__main__":
@@ -548,5 +553,25 @@ if __name__ == "__main__":
         'ogbl-citation2' : 172,
     }
     options.classnum = num_class[options.graph_name]
-    print(options)
-    main()
+
+    num_workers = options.num_workers
+    # global barrier is used to sync all the sample workers and train workers
+    options.global_barrier = mp.Barrier(num_workers, timeout=300.0)
+
+    # fork child processes
+    workers = []
+    for worker_id in range(num_workers):
+        options.worker_id = worker_id
+        p = mp.Process(target=main, args=(options, ))
+        p.start()
+        workers.append(p)
+
+    ret = wg.wait_one_child()
+    if ret != 0:
+        for p in workers:
+            p.kill()
+    for p in workers:
+        p.join()
+
+    if ret != 0:
+        sys.exit(1)
