@@ -314,28 +314,13 @@ class HomoGNNModel(torch.nn.Module):
         )
         self.mean_output = True if options.model == "gat" else False
         self.add_self_loop = True if options.model == "gat" else False
+        options.add_self_loop = self.add_self_loop
         self.dropout = nn.Dropout(options.dropout)
 
-    def forward(self, graph_block, x_feat):
-        (
-            target_gids,
-            edge_indice,
-            csr_row_ptrs,
-            csr_col_inds,
-            sample_dup_counts,
-        ) = graph_block
+    def forward(self, sub_graphs, target_gid_cnt, x_feat):
         for i in range(self.num_layer):
-            x_target_feat = x_feat[: target_gids[i + 1].numel()]
-            sub_graph = create_sub_graph(
-                target_gids[i],
-                target_gids[i + 1],
-                edge_indice[i],
-                csr_row_ptrs[i],
-                csr_col_inds[i],
-                sample_dup_counts[i],
-                self.add_self_loop,
-            )
-            x_feat = layer_forward(self.gnn_layers[i], x_feat, x_target_feat, sub_graph)
+            x_target_feat = x_feat[: target_gid_cnt[i]]
+            x_feat = layer_forward(self.gnn_layers[i], x_feat, x_target_feat, sub_graphs[i])
             if i != self.num_layer - 1:
                 if options.framework == "dgl":
                     x_feat = x_feat.flatten(1)
@@ -472,29 +457,40 @@ def train(train_data, valid_data, dist_homo_graph, model):
             # sample
             ids = idx.to(dist_homo_graph.id_type()).cuda()
             graph_block = dist_homo_graph.unweighted_sample_without_replacement(ids, options.max_neighbors)
+            (target_gids, edge_indice, csr_row_ptrs, csr_col_inds,sample_dup_counts,) = graph_block
+            sub_graphs = []
+            target_gid_cnt = []
+            for l in range(options.layernum):
+                sub_graphs.append(create_sub_graph(
+                    target_gids[l],
+                    target_gids[l + 1],
+                    edge_indice[l],
+                    csr_row_ptrs[l],
+                    csr_col_inds[l],
+                    sample_dup_counts[l],
+                    options.add_self_loop,
+                ))
+                target_gid_cnt.append(target_gids[l + 1].numel())
             torch.cuda.synchronize()
             sample_end_time = time.time()
 
             # extract
-            (target_gids, _, _, _, _) = graph_block
             x_feat = gather_fn(target_gids[0], dist_homo_graph.node_feat)
             torch.cuda.synchronize()
             extract_end_time = time.time()
 
             # train
+            label = torch.reshape(label, (-1,)).cuda()
+            optimizer.zero_grad()
             if options.use_amp:
                 with autocast(enabled=options.use_amp):
-                    logits = model(graph_block, x_feat)
-                    label = torch.reshape(label, (-1,)).cuda()
-                    optimizer.zero_grad()
+                    logits = model(sub_graphs, target_gid_cnt, x_feat)
                     loss = loss_fcn(logits, label)
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                logits = model(graph_block, x_feat)
-                label = torch.reshape(label, (-1,)).cuda()
-                optimizer.zero_grad()
+                logits = model(sub_graphs, target_gid_cnt, x_feat)
                 loss = loss_fcn(logits, label)
                 loss.backward()
                 optimizer.step()

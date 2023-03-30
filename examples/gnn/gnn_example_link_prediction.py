@@ -269,8 +269,6 @@ class DotPredictor(nn.Module):
     def forward(self, h_src, h_dst):
         return (h_src * h_dst).sum(1)
 
-sample_node_cnt = 0
-sample_time = 0
 class EdgePredictionGNNModel(torch.nn.Module):
     def __init__(
         self,
@@ -296,35 +294,14 @@ class EdgePredictionGNNModel(torch.nn.Module):
         )
         self.mean_output = True if options.model == "gat" else False
         self.add_self_loop = True if options.model == "gat" else False
+        options.add_self_loop = self.add_self_loop
         self.dropout = nn.Dropout(options.dropout)
         self.predictor = predictor
 
-    def gnn_forward(self, graph_block, x_feat):
-        (
-            target_gids,
-            edge_indice,
-            csr_row_ptrs,
-            csr_col_inds,
-            sample_dup_counts,
-        ) = graph_block
-                
-        # record sample node cnt
-        global sample_node_cnt, sample_time
-        sample_time += 1
-        sample_node_cnt += target_gids[0].shape[0]
-
+    def gnn_forward(self, sub_graphs, target_gid_cnt, x_feat):
         for i in range(self.num_layer):
-            x_target_feat = x_feat[: target_gids[i + 1].numel()]
-            sub_graph = create_sub_graph(
-                target_gids[i],
-                target_gids[i + 1],
-                edge_indice[i],
-                csr_row_ptrs[i],
-                csr_col_inds[i],
-                sample_dup_counts[i],
-                self.add_self_loop,
-            )
-            x_feat = layer_forward(self.gnn_layers[i], x_feat, x_target_feat, sub_graph)
+            x_target_feat = x_feat[: target_gid_cnt[i]]
+            x_feat = layer_forward(self.gnn_layers[i], x_feat, x_target_feat, sub_graphs[i])
             if i != self.num_layer - 1:
                 if options.framework == "dgl":
                     x_feat = x_feat.flatten(1)
@@ -339,8 +316,8 @@ class EdgePredictionGNNModel(torch.nn.Module):
     def predict(self, h_src, h_dst):
         return self.predictor(h_src, h_dst)
 
-    def forward(self, id_count, reverse_map, graph_block, x_feat):
-        out_feat_unique = self.gnn_forward(graph_block, x_feat)
+    def forward(self, id_count, reverse_map, sub_graphs, target_gid_cnt, x_feat):
+        out_feat_unique = self.gnn_forward(sub_graphs, target_gid_cnt, x_feat)
         out_feat = torch.nn.functional.embedding(reverse_map, out_feat_unique)
         src_feat, pos_dst_feat, neg_dst_feat = torch.split(out_feat, id_count)
         scores = self.predict(
@@ -374,6 +351,7 @@ def train(dist_homo_graph, model, optimizer):
     latency_s = 0
     latency_e = 0
     latency_t = 0
+    sample_node_cnt = 0
     profile_steps = (options.epochs - options.skip_epoch) * options.local_step
     labels = torch.cat([torch.ones(options.batchsize), torch.zeros(options.batchsize)]).cuda()
     
@@ -410,27 +388,40 @@ def train(dist_homo_graph, model, optimizer):
             graph_block = dist_homo_graph.unweighted_sample_without_replacement(
                 ids_unique, options.max_neighbors, exclude_edge_hashset=exclude_edge_hashset
             )
+            (target_gids, edge_indice, csr_row_ptrs, csr_col_inds,sample_dup_counts,) = graph_block
+            sample_node_cnt += target_gids[0].shape[0]
+            sub_graphs = []
+            target_gid_cnt = []
+            for l in range(options.layernum):
+                sub_graphs.append(create_sub_graph(
+                    target_gids[l],
+                    target_gids[l + 1],
+                    edge_indice[l],
+                    csr_row_ptrs[l],
+                    csr_col_inds[l],
+                    sample_dup_counts[l],
+                    options.add_self_loop,
+                ))
+                target_gid_cnt.append(target_gids[l + 1].numel())
             torch.cuda.synchronize()
             sample_end_time = time.time()
 
             # extract
-            (target_gids, _, _, _, _) = graph_block
             x_feat = gather_fn(target_gids[0], dist_homo_graph.node_feat)
             torch.cuda.synchronize()
             extract_end_time = time.time()
 
             # train
-
+            optimizer.zero_grad()
             if options.use_amp:
                 with autocast(enabled=options.use_amp):
-                    score = model(id_count, reverse_map, graph_block, x_feat)
+                    score = model(id_count, reverse_map, sub_graphs, target_gid_cnt, x_feat)
                     loss = F.binary_cross_entropy_with_logits(score, labels)
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                score = model(id_count, reverse_map, graph_block, x_feat)
-                optimizer.zero_grad()
+                score = model(id_count, reverse_map, sub_graphs, target_gid_cnt, x_feat)
                 loss = F.binary_cross_entropy_with_logits(score, labels)
                 loss.backward()
                 optimizer.step()
@@ -470,10 +461,9 @@ def train(dist_homo_graph, model, optimizer):
                 (latency_t / profile_steps)
             )
         )
-        global sample_node_cnt, sample_time
         print(
             "[STEP_META] average sample node %d"
-            % (sample_node_cnt / sample_time)
+            % (sample_node_cnt / (options.local_step * options.epochs))
         )
 
 
