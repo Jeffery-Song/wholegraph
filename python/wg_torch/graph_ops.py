@@ -509,6 +509,7 @@ class HomoGraph(object):
         self.edge_info = None
         self.wm_comm = None
         self.wm_nccl_embedding_comm = None
+        self.embedding_dim = None
 
     def id_type(self):
         return self.id_dtype
@@ -517,6 +518,7 @@ class HomoGraph(object):
         return self.feat_dtype
 
     def node_feat_shape(self):
+        if self.node_feat == None: return self.embedding_dim
         if isinstance(self.node_feat, embedding_ops.TrainableEmbedding):
             return self.node_feat.embedding.shape
         else:
@@ -581,6 +583,7 @@ class HomoGraph(object):
             ignore_embeddings is None or nodes[0]["name"] not in ignore_embeddings
         ):
             embedding_dim = nodes[0]["emb_dim"]
+            self.embedding_dim = embedding_dim
             src_dtype = string_to_pytorch_dtype(nodes[0]["dtype"])
             if feat_dtype is None:
                 feat_dtype = src_dtype

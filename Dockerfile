@@ -13,7 +13,7 @@
 
 FROM nvcr.io/nvidia/pytorch:22.08-py3
 RUN pip3 install ogb pyyaml mpi4py
-RUN apt-get update && apt install -y gdb pybind11-dev git && apt -y install ninja-build
+RUN apt-get update && apt install -y gdb pybind11-dev git && apt -y install ninja-build libtbb-dev
 
 # use proxy on a100
 ENV https_proxy=http://10.1.8.10:34560

@@ -32,6 +32,8 @@ from wg_torch import graph_ops as graph_ops
 from wg_torch.wm_tensor import *
 
 from wholegraph.torch import wholegraph_pytorch as wg
+import collcache.torch as co
+from common import *
 
 parser = OptionParser()
 parser.add_option(
@@ -111,6 +113,10 @@ parser.add_option(
     default=True,
     help="whether use amp for training, default True",
 )
+parser.add_option("--use_collcache", action="store_true", dest="use_collcache", default=False, help="use collcache lib")
+parser.add_option("--cache_percentage", type="float", dest="cache_percentage", default=0.25, help="cache percent of collcache")
+parser.add_option("--cache_policy", type="str", dest="cache_policy", default="coll_cache_asymm_link", help="cache policy of collcache")
+parser.add_option("--omp_thread_num", type="int", dest="omp_thread_num", default=40, help="omp thread num of collcache")
 
 (options, args) = parser.parse_args()
 
@@ -351,6 +357,38 @@ def train(dist_homo_graph, model, optimizer):
         % ((test_end_time - iter_start_time), ((test_end_time - iter_start_time) / options.local_step), (iter_start_time - test_start_time))
     )
 
+    # presample
+    if options.use_collcache:
+        presc_start = time.time()
+        print("presamping")
+        for iter_id in range(options.local_step):
+            src_nid, pos_dst_nid = dist_homo_graph.get_train_edge_batch(iter_id)
+            neg_dst_nid = dist_homo_graph.per_source_negative_sample(src_nid)
+            assert src_nid.shape == pos_dst_nid.shape and src_nid.shape == neg_dst_nid.shape
+            ids = torch.cat([src_nid, pos_dst_nid, neg_dst_nid])
+            exclude_edge_hashset = torch.ops.wholegraph.create_edge_hashset(
+                torch.cat([src_nid, pos_dst_nid]), torch.cat([pos_dst_nid, src_nid])
+            )
+            ids_unique, _ = torch.unique(ids, return_inverse=True)
+            ids_unique = ids_unique.to(dist_homo_graph.id_type()).cuda()
+            (target_gids, _, _, _, _, ) = dist_homo_graph.unweighted_sample_without_replacement(
+                ids_unique, options.max_neighbors, exclude_edge_hashset=exclude_edge_hashset
+            )
+            block_input_nodes = target_gids[0].to('cpu')
+            torch.cuda.synchronize()
+            co.coll_torch_record(worker_id, block_input_nodes)
+        presc_stop = time.time()
+        print(f"presamping takes {presc_stop - presc_start}")
+
+        node_feat = torch.empty((dist_homo_graph.node_count, dist_homo_graph.embedding_dim), dtype=torch.float32, device=torch.device('cpu'))
+        # self.node_feat = torch.from_numpy(
+                #     np.memmap(node_emb_file_prefix + '_part_0_of_1', 
+                #               dtype=feat_dtype, 
+                #               mode='r', 
+                #               shape=(self.node_count, embedding_dim)
+                # ))
+        co.coll_torch_init_t(worker_id, worker_id, node_feat, options.cache_percentage)
+
     latency_s = 0
     latency_e = 0
     latency_t = 0
@@ -410,7 +448,10 @@ def train(dist_homo_graph, model, optimizer):
             sample_end_time = time.time()
 
             # extract
-            x_feat = gather_fn(target_gids[0], dist_homo_graph.node_feat)
+            if options.use_collcache:
+                x_feat = co.coll_torch_lookup_key_t_val_ret(options.worker_id, target_gids[0])
+            else:
+                x_feat = gather_fn(target_gids[0], dist_homo_graph.node_feat)
             torch.cuda.synchronize()
             extract_end_time = time.time()
 
@@ -468,6 +509,7 @@ def train(dist_homo_graph, model, optimizer):
             "[STEP_META] average sample node %d"
             % (sample_node_cnt / (options.local_step * options.epochs))
         )
+        if options.use_collcache: co.report_step_average(0)
 
 
 def main(opt):
@@ -521,6 +563,13 @@ def main(opt):
         link_pred_task=True,
     )
     print("Rank=%d, Graph loaded." % (options.worker_id,))
+
+    # get config for collcache
+    if options.use_collcache:
+        config = generate_config(options)
+        config["num_total_item"] = dist_homo_graph.node_feat_shape()[0]
+        co.config(config)
+        co.coll_cache_record_init(options.worker_id)
     
     train_device = torch.device('cuda:{:}'.format(options.worker_id))
     predictor = DotPredictor()
