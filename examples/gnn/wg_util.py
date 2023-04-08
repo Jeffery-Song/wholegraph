@@ -1,5 +1,5 @@
 import dgl
-from dgl.heterograph import DGLBlock
+from dgl.heterograph import DGLBlock, DGLHeteroGraph
 
 def pad(target, unit):
     return ((target + unit - 1) // unit) * unit
@@ -16,7 +16,9 @@ def get_input_keys(graph_block):
 class BatchDataPack:
     def __init__(self):
         self.wg_graph_block = None
-        self.pair_graph = None
+        self.pair_graph_num_node = None
+        self.pair_graph_src = None
+        self.pair_graph_dst = None
     @property
     def input_keys(self):
         (target_gids, _, _, _, _, ) = self.wg_graph_block
@@ -51,3 +53,8 @@ class BatchDataPack:
             sub_graphs.append(sub_graph)
             target_gid_cnt.append(target_gids[l + 1].numel())
         return sub_graphs, target_gid_cnt
+    def to_dgl_pair_graph(self, do_pad=False):
+        num_node = pad_on_demand(self.pair_graph_num_node, 8, do_pad)
+        gidx = dgl.heterograph_index.create_unitgraph_from_coo(1, num_node, num_node, self.pair_graph_src, self.pair_graph_dst, ['coo', 'csr', 'csc'])
+        pair_graph = DGLHeteroGraph(gidx)
+        return pair_graph
