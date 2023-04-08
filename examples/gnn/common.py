@@ -28,13 +28,12 @@ cache_policy_map = {
 }
     
 
-def generate_config(options):
+def generate_config(run_config):
     config = {}
-    config["cache_percentage"] = options.cache_percentage
-    config["_cache_policy"] = cache_policy_map[options.cache_policy]
-    config["num_device"] = options.num_workers
-    config["num_global_step_per_epoch"] = options.epochs * options.local_step
-    config["num_epoch"] = options.epochs
-    # config["num_total_item"] = options.num_total_item
-    config["omp_thread_num"] = options.omp_thread_num
+    config["cache_percentage"] = run_config['cache_percentage']
+    config["_cache_policy"] = cache_policy_map[run_config['cache_policy']]
+    config["num_device"] = run_config['num_worker']
+    config["num_global_step_per_epoch"] = run_config['num_worker'] * run_config['local_step']
+    config["num_epoch"] = run_config['epochs']
+    config["omp_thread_num"] = run_config['omp_thread_num']
     return config
