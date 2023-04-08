@@ -35,7 +35,7 @@ from wg_torch.wm_tensor import *
 from wholegraph.torch import wholegraph_pytorch as wg
 import collcache.torch as co
 from common import generate_config, parse_max_neighbors, print_run_config
-from wg_util import pad_on_demand, do_sample, get_input_keys
+from wg_util import BatchDataPack
 
 def wg_params(parser):
     parser.add_option(
@@ -116,7 +116,7 @@ def wg_params(parser):
         "--amp",
         action="store_true",
         dest="use_amp",
-        default=True,
+        default=False,
         help="whether use amp for training, default True",
     )
     parser.add_option("--use_collcache", action="store_true", dest="use_collcache", default=False, help="use collcache lib")
@@ -195,6 +195,11 @@ def create_train_dataset(data_tensor_dict, rank, size):
         drop_last=True
     )
 
+def do_sup_sample(ids, dist_homo_graph, run_config):
+    graph_block = dist_homo_graph.unweighted_sample_without_replacement(ids, run_config["max_neighbors"])
+    ret = BatchDataPack()
+    ret.wg_graph_block = graph_block
+    return ret
 
 def ds_load(worker_id, run_config):
     train_data, valid_data, test_data = graph_ops.load_pickle_data(run_config["root_dir"], run_config["graph_name"], True)
@@ -243,31 +248,6 @@ def ds_load(worker_id, run_config):
 
     return dist_homo_graph, train_data_list
 
-
-def wg_sample_to_graph(graph_block):
-    (target_gids, edge_indice, csr_row_ptrs, csr_col_inds,sample_dup_counts,) = graph_block
-    sub_graphs = []
-    target_gid_cnt = []
-    for l in range(run_config["num_layer"]):
-        sub_graph = None;
-        if run_config["framework"] == "dgl":
-            gidx = dgl.heterograph_index.create_unitgraph_from_coo(2, 
-                pad_on_demand(target_gids[l].size(0), 8, run_config['use_collcache']),
-                pad_on_demand(target_gids[l + 1].size(0), 8, run_config['use_collcache']),
-                edge_indice[l][0],
-                edge_indice[l][1],
-                ['coo', 'csr', 'csc']
-            )
-            block = DGLBlock(gidx, (['_N'], ['_N']), ['_E'])
-            sub_graph = block
-        else:
-            assert run_config["framework"] == "wg"
-            sub_graph = [csr_row_ptrs[l], csr_col_inds[l], sample_dup_counts[l]]
-        sub_graphs.append(sub_graph)
-        target_gid_cnt.append(target_gids[l + 1].numel())
-    return sub_graphs, target_gid_cnt
-
-
 def main(worker_id, run_config):
     if worker_id == 0: print_run_config(run_config)
 
@@ -310,9 +290,6 @@ def main(worker_id, run_config):
     # dataset loading
     dist_homo_graph, train_data_list = ds_load(worker_id, run_config)
     run_config["local_step"] = min(run_config["local_step"], len(train_data_list))
-
-
-
 
     ###################
     # get config for collcache
@@ -358,7 +335,6 @@ def main(worker_id, run_config):
 
     num_epoch = run_config['epochs']
     total_steps = run_config["epochs"]* run_config["local_step"]
-    profile_steps = (run_config["epochs"] - run_config["skip_epoch"]) * run_config["local_step"]
     if worker_id == 0:
         print(f"epoch={num_epoch} total_steps={total_steps}")
     model.train()
@@ -370,8 +346,8 @@ def main(worker_id, run_config):
         presc_start = time.time()
         print("presamping")
         for i, (idx, _) in enumerate(train_data_list):
-            graph_block = do_sample(idx.to(dist_homo_graph.id_type()).cuda(), dist_homo_graph, run_config)
-            block_input_nodes = get_input_keys(graph_block).to('cpu')
+            batch_data_pack = do_sup_sample(idx.to(dist_homo_graph.id_type()).cuda(), dist_homo_graph, run_config)
+            block_input_nodes = batch_data_pack.input_keys.to('cpu')
             torch.cuda.synchronize()
             co.coll_torch_record(worker_id, block_input_nodes)
         presc_stop = time.time()
@@ -404,9 +380,9 @@ def main(worker_id, run_config):
             optimizer.zero_grad(set_to_none=True)
             step_start_time = time.time()
             # sample
-            graph_block = do_sample(idx.to(dist_homo_graph.id_type()).cuda(), dist_homo_graph, run_config)
-            sub_graphs, target_gid_cnt = wg_sample_to_graph(graph_block)
-            gather_keys = get_input_keys(graph_block)
+            batch_data_pack = do_sup_sample(idx.to(dist_homo_graph.id_type()).cuda(), dist_homo_graph, run_config)
+            sub_graphs, target_gid_cnt = batch_data_pack.get_graph(run_config['framework'], run_config['use_collcache'])
+            gather_keys = batch_data_pack.input_keys
             batch_label = torch.reshape(batch_label, (-1,)).cuda()
             torch.cuda.synchronize()
             sample_end_time = time.time()
@@ -483,7 +459,9 @@ if __name__ == "__main__":
     wg_params(parser)
     (options, args) = parser.parse_args()
     run_config = vars(options)
+    run_config['unsupervised'] = False
     run_config["classnum"] = num_class[run_config["graph_name"]]
+    use_amp = run_config['use_amp']
 
     num_worker = run_config["num_worker"]
     # global barrier is used to sync all the sample workers and train workers
