@@ -34,7 +34,8 @@ from wg_torch.wm_tensor import *
 
 from wholegraph.torch import wholegraph_pytorch as wg
 import collcache.torch as co
-from common import *
+from common import generate_config, parse_max_neighbors, print_run_config
+from wg_util import pad_on_demand, do_sample, get_input_keys
 
 def wg_params(parser):
     parser.add_option(
@@ -123,16 +124,6 @@ def wg_params(parser):
     parser.add_option("--cache_policy", type="str", dest="cache_policy", default="coll_cache_asymm_link", help="cache policy of collcache")
     parser.add_option("--omp_thread_num", type="int", dest="omp_thread_num", default=40, help="omp thread num of collcache")
 
-def parse_max_neighbors(num_layer, neighbor_str):
-    neighbor_str_vec = neighbor_str.split(",")
-    max_neighbors = []
-    for ns in neighbor_str_vec:
-        max_neighbors.append(int(ns))
-    assert len(max_neighbors) == 1 or len(max_neighbors) == num_layer
-    if len(max_neighbors) != num_layer:
-        for i in range(1, num_layer):
-            max_neighbors.append(max_neighbors[0])
-    return max_neighbors
 
 def create_gnn_layers(in_feat_dim, hidden_feat_dim, class_count, num_layer):
     if run_config["framework"] == "dgl":
@@ -252,10 +243,6 @@ def ds_load(worker_id, run_config):
 
     return dist_homo_graph, train_data_list
 
-def pad(target, unit):
-    if not run_config['use_collcache']:
-        return target
-    return ((target + unit - 1) // unit) * unit
 
 def wg_sample_to_graph(graph_block):
     (target_gids, edge_indice, csr_row_ptrs, csr_col_inds,sample_dup_counts,) = graph_block
@@ -265,8 +252,8 @@ def wg_sample_to_graph(graph_block):
         sub_graph = None;
         if run_config["framework"] == "dgl":
             gidx = dgl.heterograph_index.create_unitgraph_from_coo(2, 
-                pad(target_gids[l].size(0), 8),
-                pad(target_gids[l + 1].size(0), 8),
+                pad_on_demand(target_gids[l].size(0), 8, run_config['use_collcache']),
+                pad_on_demand(target_gids[l + 1].size(0), 8, run_config['use_collcache']),
                 edge_indice[l][0],
                 edge_indice[l][1],
                 ['coo', 'csr', 'csc']
@@ -280,24 +267,6 @@ def wg_sample_to_graph(graph_block):
         target_gid_cnt.append(target_gids[l + 1].numel())
     return sub_graphs, target_gid_cnt
 
-def do_sample(ids, dist_homo_graph):
-    graph_block = dist_homo_graph.unweighted_sample_without_replacement(ids, run_config["max_neighbors"])
-    return graph_block
-
-def get_input_keys(graph_block):
-    (target_gids, _, _, _, _, ) = graph_block
-    return target_gids[0]
-
-def print_run_config(run_config):
-    print('config:eval_tsp="{:}"'.format(time.strftime(
-        "%Y-%m-%d %H:%M:%S", time.localtime())))
-    for k, v in run_config.items():
-        if not k.startswith('_'):
-            print('config:{:}={:}'.format(k, v))
-
-    for k, v in run_config.items():
-        if k.startswith('_'):
-            print('config:{:}={:}'.format(k, v))
 
 def main(worker_id, run_config):
     if worker_id == 0: print_run_config(run_config)
@@ -401,7 +370,7 @@ def main(worker_id, run_config):
         presc_start = time.time()
         print("presamping")
         for i, (idx, _) in enumerate(train_data_list):
-            graph_block = do_sample(idx.to(dist_homo_graph.id_type()).cuda(), dist_homo_graph)
+            graph_block = do_sample(idx.to(dist_homo_graph.id_type()).cuda(), dist_homo_graph, run_config)
             block_input_nodes = get_input_keys(graph_block).to('cpu')
             torch.cuda.synchronize()
             co.coll_torch_record(worker_id, block_input_nodes)
@@ -429,12 +398,13 @@ def main(worker_id, run_config):
             latency_e = 0
             latency_t = 0
         global_barrier.wait()
+        epoch_start_time = time.time()
         for i, (idx, batch_label) in enumerate(train_data_list):
 
             optimizer.zero_grad(set_to_none=True)
             step_start_time = time.time()
             # sample
-            graph_block = do_sample(idx.to(dist_homo_graph.id_type()).cuda(), dist_homo_graph)
+            graph_block = do_sample(idx.to(dist_homo_graph.id_type()).cuda(), dist_homo_graph, run_config)
             sub_graphs, target_gid_cnt = wg_sample_to_graph(graph_block)
             gather_keys = get_input_keys(graph_block)
             batch_label = torch.reshape(batch_label, (-1,)).cuda()
@@ -472,15 +442,10 @@ def main(worker_id, run_config):
             latency_t += (step_end_time - extract_end_time)
             latency_total += (step_end_time - step_start_time)
             step_key += num_worker
+        global_barrier.wait()
+        epoch_end_time = time.time()
         if worker_id == 0:
-            print(
-                "[%s] [LOSS] epoch=%d, loss=%f"
-                % (
-                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    epoch,
-                    loss.cpu().item(),
-                )
-            )
+            print(f"[Epoch {epoch}], time={epoch_end_time - epoch_start_time}, loss={loss.cpu().item()}")
     torch.cuda.synchronize()
     train_end_time = time.time()
     

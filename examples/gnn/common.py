@@ -1,4 +1,4 @@
-
+import time
 kCacheByDegree          = 0
 kCacheByHeuristic       = 1
 kCacheByPreSample       = 2
@@ -37,3 +37,25 @@ def generate_config(run_config):
     config["num_epoch"] = run_config['epochs']
     config["omp_thread_num"] = run_config['omp_thread_num']
     return config
+
+def parse_max_neighbors(num_layer, neighbor_str):
+    neighbor_str_vec = neighbor_str.split(",")
+    max_neighbors = []
+    for ns in neighbor_str_vec:
+        max_neighbors.append(int(ns))
+    assert len(max_neighbors) == 1 or len(max_neighbors) == num_layer
+    if len(max_neighbors) != num_layer:
+        for i in range(1, num_layer):
+            max_neighbors.append(max_neighbors[0])
+    return max_neighbors
+
+def print_run_config(run_config):
+    print('config:eval_tsp="{:}"'.format(time.strftime(
+        "%Y-%m-%d %H:%M:%S", time.localtime())))
+    for k, v in run_config.items():
+        if not k.startswith('_'):
+            print('config:{:}={:}'.format(k, v))
+
+    for k, v in run_config.items():
+        if k.startswith('_'):
+            print('config:{:}={:}'.format(k, v))
