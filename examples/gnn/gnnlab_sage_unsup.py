@@ -234,6 +234,9 @@ def ds_load(worker_id, run_config):
     wm_embedding_comm = None
     if run_config["use_nccl"]:
         wm_embedding_comm = create_global_communicator(run_config["worker_id"], run_config["num_worker"])
+    ignore_embeddings = None
+    if run_config['use_collcache']:
+        ignore_embeddings=['paper', 'node']
 
     # graph loading
     dist_homo_graph = graph_ops.HomoGraph()
@@ -246,7 +249,8 @@ def ds_load(worker_id, run_config):
         use_chunked,
         use_host_memory,
         wm_embedding_comm,
-        link_pred_task=True,
+        link_pred_task=run_config['unsupervised'],
+        ignore_embeddings=ignore_embeddings,
     )
     max_total_local_steps = dist_homo_graph.start_iter(run_config['batchsize'])
     print(f"Rank={worker_id}, Graph loaded.")
@@ -309,7 +313,7 @@ def main(worker_id, run_config):
     # get config for collcache
     # if run_config["use_collcache"]:
     config = generate_config(run_config)
-    config["num_total_item"] = dist_homo_graph.node_feat_shape()[0]
+    config["num_total_item"] = dist_homo_graph.node_count
     co.config(config)
     co.coll_cache_record_init(worker_id)
 
@@ -331,12 +335,12 @@ def main(worker_id, run_config):
 
 
     # model initialize
-    in_feat = dist_homo_graph.node_feat_shape()[1]
+    in_feat = dist_homo_graph.node_info['emb_dim']
     num_class = run_config["classnum"]
     num_layer = run_config['num_layer']
     run_config["max_neighbors"] = parse_max_neighbors(run_config['num_layer'], run_config["neighbors"])
 
-    model = SAGE(in_feat, run_config["hiddensize"], num_class,
+    model = SAGE(in_feat, run_config["hiddensize"], run_config["hiddensize"],
                  num_layer, F.relu, run_config['dropout'])
     model = model.to(device)
     predictor = DotPredictor().to(device)
@@ -370,7 +374,7 @@ def main(worker_id, run_config):
         presc_stop = time.time()
         print(f"presamping takes {presc_stop - presc_start}")
 
-        node_feat = torch.empty((dist_homo_graph.node_count, dist_homo_graph.embedding_dim), dtype=torch.float32, device=torch.device('cpu'))
+        node_feat = co.coll_torch_create_emb_shm(worker_id, dist_homo_graph.node_count, dist_homo_graph.node_info['emb_dim'], torch.float32)
         co.coll_torch_init_t(worker_id, worker_id, node_feat, run_config["cache_percentage"])
 
     if worker_id == 0:
@@ -461,7 +465,7 @@ def main(worker_id, run_config):
             % ((train_end_time - skip_epoch_time) / (run_config["epochs"] - run_config["skip_epoch"]))
         )
         co.report_step_average(0)
-
+        co.print_memory_usage()
     wg.finalize_lib()
 
 
