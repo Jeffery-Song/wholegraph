@@ -65,6 +65,7 @@ def wg_params(parser):
     )
     parser.add_option("--skip_epoch", type="int", dest="skip_epoch", default=3, help="num of skip epoch for profile")
     parser.add_option("--local_step", type="int", dest="local_step", default=19, help="num of steps on a GPU in an epoch")
+    parser.add_option("--presc_epoch", type="int", dest="presc_epoch", default=2, help="epochs to pre-sample")
     parser.add_option(
         "-n",
         "--neighbors",
@@ -349,11 +350,12 @@ def main(worker_id, run_config):
     if run_config["use_collcache"]:
         presc_start = time.time()
         print("presamping")
-        for i, (idx, _) in enumerate(train_data_list):
-            batch_data_pack = do_sup_sample(idx.to(dist_homo_graph.id_type()).cuda(), dist_homo_graph, run_config)
-            block_input_nodes = batch_data_pack.input_keys.to('cpu')
-            torch.cuda.synchronize()
-            co.coll_torch_record(worker_id, block_input_nodes)
+        for presc_epoch in range(run_config['presc_epoch']):
+            for i, (idx, _) in enumerate(train_data_list):
+                batch_data_pack = do_sup_sample(idx.to(dist_homo_graph.id_type()).cuda(), dist_homo_graph, run_config)
+                block_input_nodes = batch_data_pack.input_keys.to('cpu')
+                torch.cuda.synchronize()
+                co.coll_torch_record(worker_id, block_input_nodes)
         presc_stop = time.time()
         print(f"presamping takes {presc_stop - presc_start}")
 
