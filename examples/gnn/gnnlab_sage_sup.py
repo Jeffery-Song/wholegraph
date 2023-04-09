@@ -34,7 +34,7 @@ from wg_torch.wm_tensor import *
 
 from wholegraph.torch import wholegraph_pytorch as wg
 import collcache.torch as co
-from common import generate_config, parse_max_neighbors, print_run_config
+from common import generate_config, parse_max_neighbors, print_run_config, feat_dtype_dict, num_class_dict
 from wg_util import BatchDataPack
 
 def wg_params(parser):
@@ -362,7 +362,7 @@ def main(worker_id, run_config):
         if worker_id == 0:
             co.print_memory_usage()
 
-        node_feat = co.coll_torch_create_emb_shm(worker_id, dist_homo_graph.node_count, dist_homo_graph.node_info['emb_dim'], torch.float32)
+        node_feat = co.coll_torch_create_emb_shm(worker_id, dist_homo_graph.node_count, dist_homo_graph.node_info['emb_dim'], feat_dtype_dict[run_config['graph_name']])
         co.coll_torch_init_t(worker_id, worker_id, node_feat, run_config["cache_percentage"])
 
     if worker_id == 0:
@@ -455,23 +455,13 @@ def main(worker_id, run_config):
 
 
 if __name__ == "__main__":
-    num_class = {
-        'reddit' : 41,
-        'products' : 47,
-        'twitter' : 150,
-        'papers100M' : 172,
-        'ogbn-papers100M' : 172,
-        'uk-2006-05' : 150,
-        'com-friendster' : 100,
-        'mag240m-homo' : 153,
-    }
 
     parser = OptionParser()
     wg_params(parser)
     (options, args) = parser.parse_args()
     run_config = vars(options)
     run_config['unsupervised'] = False
-    run_config["classnum"] = num_class[run_config["graph_name"]]
+    run_config["classnum"] = num_class_dict[run_config["graph_name"]]
     use_amp = run_config['use_amp']
 
     num_worker = run_config["num_worker"]

@@ -1,3 +1,4 @@
+import torch
 import time
 kCacheByDegree          = 0
 kCacheByHeuristic       = 1
@@ -59,3 +60,19 @@ def print_run_config(run_config):
     for k, v in run_config.items():
         if k.startswith('_'):
             print('config:{:}={:}'.format(k, v))
+
+num_class_dict = {
+    'papers100M'      : 172,
+    'ogbn-papers100M' : 172,
+    'uk-2006-05'      : 150,
+    'com-friendster'  : 100,
+    'mag240m-homo'    : 153,
+}
+
+feat_dtype_dict = {
+    'papers100M'      : torch.float32,
+    'ogbn-papers100M' : torch.float32,
+    'uk-2006-05'      : torch.float32,
+    'com-friendster'  : torch.float32,
+    'mag240m-homo'    : torch.float16,
+}
