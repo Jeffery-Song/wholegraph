@@ -359,6 +359,9 @@ def main(worker_id, run_config):
         presc_stop = time.time()
         print(f"presamping takes {presc_stop - presc_start}")
 
+        if worker_id == 0:
+            co.print_memory_usage()
+
         node_feat = co.coll_torch_create_emb_shm(worker_id, dist_homo_graph.node_count, dist_homo_graph.node_info['emb_dim'], torch.float32)
         co.coll_torch_init_t(worker_id, worker_id, node_feat, run_config["cache_percentage"])
 
@@ -433,6 +436,7 @@ def main(worker_id, run_config):
     
     global_barrier.wait()
     if worker_id == 0:
+        print(torch.cuda.memory_summary())
         print(
             "[TRAIN_TIME] train time is %.6f seconds"
             % (train_end_time - train_start_time)
@@ -458,7 +462,8 @@ if __name__ == "__main__":
         'papers100M' : 172,
         'ogbn-papers100M' : 172,
         'uk-2006-05' : 150,
-        'com-friendster' : 100
+        'com-friendster' : 100,
+        'mag240m-homo' : 153,
     }
 
     parser = OptionParser()
