@@ -118,54 +118,24 @@ class RunConfig:
     self.omp_thread_num         = 40
     self.empty_feat             = 0
     self.profile_level          = 3
+    self.custom_env = ''
     self.coll_cache_no_group = ""
     self.coll_cache_concurrent_link = ""
     self.num_feat_dim_hack      = None
+    self.coll_cache_cpu_addup = ""
+    self.coll_cache_scale = 0
 
     self.use_amp                = False
     self.use_nccl               = False
     self.unsupervised           = False
 
-  def get_log_fname(self):
-    std_out_log = f'{self.logdir}/'
-    if self.unsupervised: 
-      std_out_log += "unsup_"
-    else: std_out_log += "sup_"
-    if self.use_collcache: 
-      std_out_log += "sgnn_"
-    else: std_out_log += "wg_"
-
-    std_out_log += '_'.join(
-      [self.framework.name, self.model.name, self.dataset.short()] +
-      [self.cache_policy.name, f'cache_rate_{round(self.cache_percent*100):0>3}'] + 
-      [f'batch_size_{self.batchsize}'])
-    if self.use_amp:
-      std_out_log += '_amp'
-    if self.coll_cache_no_group != "":
-      std_out_log += f'_nogroup_{self.coll_cache_no_group}'
-    if self.coll_cache_concurrent_link != "":
-      std_out_log += f'_concurrent_impl_{self.coll_cache_concurrent_link}'
-    return std_out_log
-
-  def beauty(self):
-    msg = 'Running '
-    if self.unsupervised: 
-      msg += "unsup "
-    else: msg += "sup "
-    if self.use_collcache: 
-      msg += "sgnn "
-    else: msg += "wg "
-    msg += ' '.join(
-      [self.framework.name, self.model.name, self.dataset.name] +
-      [self.cache_policy.name, f'cache_rate {self.cache_percent}', f'batch_size {self.batchsize}'])
-    if self.coll_cache_no_group != "":
-      msg += f' nogroup={self.coll_cache_no_group}'
-    if self.coll_cache_concurrent_link != "":
-      msg += f' concurrent_link={self.coll_cache_concurrent_link}'
-    return datetime.datetime.now().strftime('[%H:%M:%S]') + msg + '.'
 
   def form_cmd(self, durable_log=True):
     cmd_line = f'COLL_NUM_REPLICA={self.num_workers} '
+    if self.coll_cache_cpu_addup:
+      cmd_line += f'COLL_CACHE_CPU_ADDUP={self.coll_cache_cpu_addup} '
+    if self.coll_cache_scale != 0:
+      cmd_line += f'COLL_CACHE_SCALE={self.coll_cache_scale} '
     cmd_line += f'SAMGRAPH_PROFILE_LEVEL={self.profile_level} ' 
     if self.use_collcache and self.empty_feat > 0:
       cmd_line += f'SAMGRAPH_EMPTY_FEAT={self.empty_feat} '
@@ -177,6 +147,8 @@ class RunConfig:
       cmd_line += f' SAMGRAPH_COLL_CACHE_CONCURRENT_LINK=0 '
     if self.num_feat_dim_hack != None:
       cmd_line += f'SAMGRAPH_FAKE_FEAT_DIM={self.num_feat_dim_hack} '
+    if self.custom_env != '':
+      cmd_line += f'{self.custom_env} '
 
     if self.unsupervised:
       cmd_line += f'python ../../examples/gnn/gnnlab_sage_unsup.py'
@@ -212,6 +184,39 @@ class RunConfig:
       cmd_line += f' 2> \"{std_err_log}\"'
       cmd_line += ';'
     return cmd_line
+  
+  def get_log_fname(self):
+    std_out_log = f'{self.logdir}/'
+    if self.unsupervised: std_out_log += "unsup_"
+    else:                 std_out_log += "sup_"
+    if self.use_collcache: std_out_log += "coll_"
+    else:                  std_out_log += "wg_"
+    std_out_log += '_'.join(
+      [self.framework.name, self.model.name, self.dataset.short()] +
+      [self.cache_policy.name, f'cache_rate_{round(self.cache_percent*100):0>3}'] + 
+      [f'batch_size_{self.batchsize}'])
+    if self.use_amp:
+      std_out_log += '_amp'
+    if self.coll_cache_no_group != "":
+      std_out_log += f'_nogroup_{self.coll_cache_no_group}'
+    if self.coll_cache_concurrent_link != "":
+      std_out_log += f'_concurrent_impl_{self.coll_cache_concurrent_link}'
+    return std_out_log
+
+  def beauty(self):
+    msg = 'Running '
+    if self.unsupervised: msg += "unsup "
+    else: msg += "sup "
+    if self.use_collcache: msg += "coll "
+    else: msg += "wg "
+    msg += ' '.join(
+      [self.framework.name, self.model.name, self.dataset.name] +
+      [self.cache_policy.name, f'cache_rate {self.cache_percent}', f'batch_size {self.batchsize}'])
+    if self.coll_cache_no_group != "":
+      msg += f' nogroup={self.coll_cache_no_group}'
+    if self.coll_cache_concurrent_link != "":
+      msg += f' concurrent_link={self.coll_cache_concurrent_link}'
+    return datetime.datetime.now().strftime('[%H:%M:%S]') + msg + '.'
 
   def run(self, mock=False, durable_log=True, callback = None, fail_only=False):
     '''
