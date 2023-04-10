@@ -201,6 +201,8 @@ class RunConfig:
       std_out_log += f'_nogroup_{self.coll_cache_no_group}'
     if self.coll_cache_concurrent_link != "":
       std_out_log += f'_concurrent_impl_{self.coll_cache_concurrent_link}'
+    if self.coll_cache_scale != 0:
+      std_out_log += f'_scale_nb_{self.coll_cache_scale}'
     return std_out_log
 
   def beauty(self):
@@ -216,6 +218,8 @@ class RunConfig:
       msg += f' nogroup={self.coll_cache_no_group}'
     if self.coll_cache_concurrent_link != "":
       msg += f' concurrent_link={self.coll_cache_concurrent_link}'
+    if self.coll_cache_scale != "":
+      msg += f' scale_nb={self.coll_cache_scale}'
     return datetime.datetime.now().strftime('[%H:%M:%S]') + msg + '.'
 
   def run(self, mock=False, durable_log=True, callback = None, fail_only=False):
