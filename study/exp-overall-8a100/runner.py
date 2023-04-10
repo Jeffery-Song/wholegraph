@@ -40,12 +40,12 @@ cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.ma
 
 
 cfg_list_collector.hyper_override(
-  ['use_collcache', 'cache_policy'], 
+  ['use_collcache', 'cache_policy', "coll_cache_no_group", "coll_cache_concurrent_link"], 
   [
-    [True, CachePolicy.clique_part],
-    [True, CachePolicy.rep],
-    [True, CachePolicy.coll_cache_asymm_link],
-    [False, CachePolicy.coll_cache_asymm_link]
+    [True, CachePolicy.clique_part, "DIRECT", ""],
+    [True, CachePolicy.rep, "DIRECT", ""],
+    [True, CachePolicy.coll_cache_asymm_link, "", "MPSPhase"],
+    [False, CachePolicy.coll_cache_asymm_link, "", ""]
 ])
 
 if __name__ == '__main__':

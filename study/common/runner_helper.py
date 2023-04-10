@@ -118,6 +118,8 @@ class RunConfig:
     self.omp_thread_num         = 40
     self.empty_feat             = 0
     self.profile_level          = 3
+    self.coll_cache_no_group = ""
+    self.coll_cache_concurrent_link = ""
 
     self.use_amp                = False
     self.use_nccl               = False
@@ -138,6 +140,10 @@ class RunConfig:
       [f'batch_size_{self.batchsize}'])
     if self.use_amp:
       std_out_log += '_amp'
+    if self.coll_cache_no_group != "":
+      std_out_log += f'_nogroup_{self.coll_cache_no_group}'
+    if self.coll_cache_concurrent_link != "":
+      std_out_log += f'_concurrent_impl_{self.coll_cache_concurrent_link}'
     return std_out_log
 
   def beauty(self):
@@ -151,6 +157,10 @@ class RunConfig:
     msg += ' '.join(
       [self.framework.name, self.model.name, self.dataset.name] +
       [self.cache_policy.name, f'cache_rate {self.cache_percent}', f'batch_size {self.batchsize}'])
+    if self.coll_cache_no_group != "":
+      msg += f' nogroup={self.coll_cache_no_group}'
+    if self.coll_cache_concurrent_link != "":
+      msg += f' concurrent_link={self.coll_cache_concurrent_link}'
     return datetime.datetime.now().strftime('[%H:%M:%S]') + msg + '.'
 
   def form_cmd(self, durable_log=True):
@@ -158,6 +168,12 @@ class RunConfig:
     cmd_line += f'SAMGRAPH_PROFILE_LEVEL={self.profile_level} ' 
     if self.use_collcache and self.empty_feat > 0:
       cmd_line += f'SAMGRAPH_EMPTY_FEAT={self.empty_feat} '
+    if self.coll_cache_no_group != "":
+      cmd_line += f'SAMGRAPH_COLL_CACHE_NO_GROUP={self.coll_cache_no_group} '
+    if self.coll_cache_concurrent_link != "":
+      cmd_line += f' SAMGRAPH_COLL_CACHE_CONCURRENT_LINK_IMPL={self.coll_cache_concurrent_link} SAMGRAPH_COLL_CACHE_CONCURRENT_LINK=1 '
+    else:
+      cmd_line += f' SAMGRAPH_COLL_CACHE_CONCURRENT_LINK=0 '
 
     if self.unsupervised:
       cmd_line += f'python ../../examples/gnn/gnnlab_sage_unsup.py'
