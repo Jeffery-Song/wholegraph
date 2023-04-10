@@ -210,7 +210,24 @@ class RunConfig:
       cmd_line += ';'
     return cmd_line
 
-  def run(self, mock=False, durable_log=True, callback = None, retry=False):
+  def run(self, mock=False, durable_log=True, callback = None, fail_only=False):
+    '''
+    fail_only: only run previously failed job. fail status is recorded in json file
+    '''
+    previous_succeed = False
+    if fail_only:
+      try:
+        with open(self.get_log_fname() + '.log', "r") as logf:
+          first_line = logf.readline().strip()
+        if first_line == "succeed=True":
+          previous_succeed = True
+      except Exception as e:
+        pass
+      if previous_succeed:
+        if callback != None:
+          callback(self)
+        return 0
+
     if mock:
       print(self.form_cmd(durable_log))
     else:
@@ -218,17 +235,24 @@ class RunConfig:
 
       if durable_log:
         os.system('mkdir -p {}'.format(self.logdir))
-      while True:
-        status = os.system(self.form_cmd(durable_log))
-        if os.WEXITSTATUS(status) != 0:
-          if retry:
-            print("FAILED and Retry!")
-            continue
-          print("FAILED!")
-        if callback != None:
-          callback(self)
-        break
+      status = os.system(self.form_cmd(durable_log))
+      if os.WEXITSTATUS(status) != 0:
+        print("FAILED!")
+        if durable_log:
+          self.prepend_log_succeed(False)
+        return 1
+      else:
+        if durable_log:
+          self.prepend_log_succeed(True)
+      if callback != None:
+        callback(self)
     return 0
+  def prepend_log_succeed(self, succeed_bool):
+    with open(self.get_log_fname() + '.log', "r") as logf:
+      log_content = logf.readlines()
+    with open(self.get_log_fname() + '.log', "w") as logf:
+      print(f"succeed={succeed_bool}", file=logf)
+      print("".join(log_content), file=logf)
 
 def run_in_list(conf_list : list, mock=False, durable_log=True, callback = None):
   for conf in conf_list:
@@ -249,6 +273,14 @@ class ConfigList:
       if getattr(cfg, key) in val_indicator:
         newlist.append(cfg)
     self.conf_list = newlist
+    return self
+
+  def override_arch(self, arch):
+    '''
+    override all arch in config list by arch
+    '''
+    for cfg in self.conf_list:
+      cfg.arch = arch
     return self
 
   def override(self, key, val_list):
@@ -332,7 +364,28 @@ class ConfigList:
       raise Exception("Please construct fron runconfig or list of it")
     return ret
 
-  def run(self, mock=False, durable_log=True, callback = None, retry=False):
+  def run(self, mock=False, durable_log=True, callback = None, fail_only=False):
     for conf in self.conf_list:
       conf : RunConfig
-      conf.run(mock, durable_log, callback, retry)
+      conf.run(mock, durable_log, callback, fail_only=fail_only)
+
+  def run_stop_on_fail(self, mock=False, durable_log=True, callback = None, fail_only=False):
+    last_conf = None
+    last_ret = None
+    for conf in self.conf_list:
+      conf : RunConfig
+      if last_conf != None and (
+                      conf.unsupervised == last_conf.unsupervised and 
+                      conf.app == last_conf.app and 
+                      conf.sample_type == last_conf.sample_type and 
+                      conf.batch_size == last_conf.batch_size and 
+                      conf.dataset == last_conf.dataset):
+        if conf.cache_percent == last_conf.cache_percent and last_ret != 0:
+          continue
+        if conf.cache_percent > last_conf.cache_percent and last_ret != 0 :
+          continue
+        if conf.cache_percent < last_conf.cache_percent and last_ret == 0 :
+          continue
+      ret = conf.run(mock, durable_log, callback, fail_only=fail_only)
+      last_conf = conf
+      last_ret = ret
