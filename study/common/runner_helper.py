@@ -120,6 +120,7 @@ class RunConfig:
     self.profile_level          = 3
     self.coll_cache_no_group = ""
     self.coll_cache_concurrent_link = ""
+    self.num_feat_dim_hack      = None
 
     self.use_amp                = False
     self.use_nccl               = False
@@ -174,6 +175,8 @@ class RunConfig:
       cmd_line += f' SAMGRAPH_COLL_CACHE_CONCURRENT_LINK_IMPL={self.coll_cache_concurrent_link} SAMGRAPH_COLL_CACHE_CONCURRENT_LINK=1 '
     else:
       cmd_line += f' SAMGRAPH_COLL_CACHE_CONCURRENT_LINK=0 '
+    if self.num_feat_dim_hack != None:
+      cmd_line += f'SAMGRAPH_FAKE_FEAT_DIM={self.num_feat_dim_hack} '
 
     if self.unsupervised:
       cmd_line += f'python ../../examples/gnn/gnnlab_sage_unsup.py'

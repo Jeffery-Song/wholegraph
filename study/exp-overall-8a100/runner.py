@@ -25,7 +25,7 @@ GraphSage
 cur_common_base = (cur_common_base.copy().override('model', [Model.sage]).override('unsupervised', [True]))
 cur_common_base = (cur_common_base.copy().override('batchsize', [8000]).override('local_step', [125]))
 cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.papers100M_undir, ]).override('cache_percent', [0.25]))
-cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.friendster,       ]).override('cache_percent', [0.25]))
+cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.friendster,       ]).override('cache_percent', [0.25]).override('num_feat_dim_hack', [256]))
 # # 1.2 unsup, mag 240 requires different batch
 cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.mag240m_homo,     ]).override('cache_percent', [0.08]).override('batchsize', [2000]))
 
@@ -34,7 +34,7 @@ cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.ma
 cur_common_base = (cur_common_base.copy().override('unsupervised', [False]))
 cur_common_base = (cur_common_base.copy().override('batchsize', [8000]))
 cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.papers100M_undir, ]).override('cache_percent', [0.25]))
-cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.friendster,       ]).override('cache_percent', [0.25]))
+cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.friendster,       ]).override('cache_percent', [0.25]).override('num_feat_dim_hack', [256]))
 # # 1.2 sup, mag 240 requires different batch
 cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.mag240m_homo,     ]).override('cache_percent', [0.08]).override('batchsize', [8000]))
 
