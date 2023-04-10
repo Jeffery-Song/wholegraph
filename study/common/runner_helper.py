@@ -71,7 +71,7 @@ class Dataset(Enum):
   def TopoGB(self):
     return [math.nan, 0.4700, 6.4326, 13.7007, math.nan , 11.3358, 5.6252, 12.4394, 13.7785][self.value]
   def short(self):
-    return ['RE', 'PR', 'PA', 'FR', 'UK', 'TW', 'PAU', 'MAG'][self.value]
+    return ['RE', 'PR', 'PA', 'CF', 'UK', 'TW', 'PAU', 'MAG'][self.value]
 
 class CachePolicy(Enum):
   pre_sample = 0
