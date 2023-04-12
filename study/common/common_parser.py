@@ -35,6 +35,26 @@ def my_assert_eq(a, b):
     print(a, "!=", b)
     assert(False)
 
+def div_nan(a,b):
+  if b == 0:
+    return math.nan
+  return a/b
+
+def max_nan(a,b):
+  if math.isnan(a):
+    return b
+  elif math.isnan(b):
+    return a
+  else:
+    return max(a,b)
+
+def handle_nan(a, default=0):
+  if math.isnan(a):
+    return default
+  return a
+def zero_nan(a):
+  return handle_nan(a, 0)
+
 def grep_from(fname, pattern, line_ctx=[0,0]):
   p = re.compile(pattern)
   try:
@@ -47,6 +67,8 @@ def grep_from(fname, pattern, line_ctx=[0,0]):
         if p.match(lines[i]):
           ret_lines += lines[max(0, i - line_ctx[0]):min(len(lines), i + line_ctx[1] + 1)]
     return ret_lines
+  except FileNotFoundError as e:
+    return []
   except Exception as e:
     print("error when ", fname)
     print(traceback.format_exc())
@@ -90,6 +112,7 @@ class BenchInstance:
       self.prepare_config(cfg)
       self.prepare_epoch_eval_wg(cfg)
       self.prepare_cuda_eval_wg(cfg)
+      self.prepare_coll_cache_meta(cfg)
     except Exception as e:
       print("error ", e, " when ", fname)
       print(traceback.format_exc())
@@ -127,7 +150,16 @@ class BenchInstance:
     self.vals['dataset'] = str(cfg.dataset)
     self.vals['dataset_short'] = cfg.dataset.short()
     self.vals['cache_policy'] = cfg.cache_policy.name
+    self.vals['cache_policy_short'] = cfg.cache_policy.short()
     self.vals['cache_percentage'] = 100 * cfg.cache_percent
+
+    suffix = "_unsup" if self.get_val('unsupervised') else "_sup"
+    self.vals['short_app'] = self.get_val('model') + suffix
+
+    if cfg.use_collcache == False:
+      self.vals['policy_impl'] = "WG"
+    else:
+      self.vals['policy_impl'] = self.get_val('coll_cache_concurrent_link') + self.get_val('cache_policy_short')
 
   def prepare_init(self, cfg):
     self.vals['init:presample'] = math.nan
@@ -184,6 +216,39 @@ class BenchInstance:
       m = re.match(r".*local ([0-9]+) / ([0-9]+) nodes.*", coll_rst_list[0])
       self.vals["coll_cache:local_cache_rate"] = float(m.group(1)) / float(m.group(2))
       self.vals["coll_cache:global_cache_rate"] = self.vals["coll_cache:remote_cache_rate"] + self.vals["coll_cache:local_cache_rate"]
+
+  def prepare_coll_cache_meta(self, cfg):
+    try:
+      self.vals['Step(average) L1 train total'] = self.get_val('Step(average) L1 convert time') + self.get_val('Step(average) L1 train')
+      # when cache rate = 0, extract time has different log name...
+      self.vals['Step(average) L2 feat copy'] = max_nan(self.get_val('Step(average) L2 cache feat copy'), self.get_val('Step(average) L2 extract'))
+
+      # per-step feature nbytes (Remote, Cpu, Local)
+      self.vals['Size.A'] = self.get_val('Step(average) L1 feature nbytes')
+      self.vals['Size.R'] = handle_nan(self.get_val('Step(average) L1 remote nbytes'), 0)
+      self.vals['Size.C'] = handle_nan(self.get_val('Step(average) L1 miss nbytes'), self.vals['Size.A'])
+      self.vals['Size.L'] = self.get_val('Size.A') - self.get_val('Size.C') - self.get_val('Size.R')
+
+      self.vals['SizeGB.R'] = self.get_val('Size.R') / 1024 / 1024 / 1024
+      self.vals['SizeGB.C'] = self.get_val('Size.C') / 1024 / 1024 / 1024
+      self.vals['SizeGB.L'] = self.get_val('Size.L') / 1024 / 1024 / 1024
+
+      # per-step extraction time
+      self.vals['Time.R'] = handle_nan(self.get_val('Step(average) L3 cache combine remote'))
+      self.vals['Time.C'] = handle_nan(self.get_val('Step(average) L3 cache combine_miss'), self.get_val('Step(average) L2 extract'))
+      self.vals['Time.L'] = handle_nan(self.get_val('Step(average) L3 cache combine cache'))
+
+      # per-step extraction throughput (GB/s)
+      self.vals['Thpt.R'] = div_nan(self.get_val('Size.R'), self.get_val('Time.R')) / 1024 / 1024 / 1024
+      self.vals['Thpt.C'] = div_nan(self.get_val('Size.C'), self.get_val('Time.C')) / 1024 / 1024 / 1024
+      self.vals['Thpt.L'] = div_nan(self.get_val('Size.L'), self.get_val('Time.L')) / 1024 / 1024 / 1024
+
+      # per-step extraction portion from different source
+      self.vals['Wght.R'] = div_nan(self.get_val('Size.R'), self.get_val('Size.A')) * 100
+      self.vals['Wght.C'] = div_nan(self.get_val('Size.C'), self.get_val('Size.A')) * 100
+      self.vals['Wght.L'] = 100 - self.get_val('Wght.R') - self.get_val('Wght.C')
+    except Exception as e:
+      print("Error when " + self.cfg.get_log_fname() + '.log')
 
   def prepare_epoch_eval(self, cfg):
     self.vals['epoch_time'] = math.nan

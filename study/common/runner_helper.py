@@ -73,16 +73,38 @@ class Dataset(Enum):
   def short(self):
     return ['RE', 'PR', 'PA', 'CF', 'UK', 'TW', 'PAU', 'MAG'][self.value]
 
+# class CachePolicy(Enum):
+#   pre_sample = 0
+#   coll_cache = 1
+#   coll_intuitive = 2
+#   partition = 3
+#   part_rep = 4
+#   rep = 5
+#   coll_cache_asymm_link = 6
+#   clique_part = 7
+#   clique_part_by_degree = 8
+
 class CachePolicy(Enum):
-  pre_sample = 0
-  coll_cache = 1
-  coll_intuitive = 2
-  partition = 3
-  part_rep = 4
-  rep = 5
-  coll_cache_asymm_link = 6
-  clique_part = 7
-  clique_part_by_degree = 8
+  def __new__(cls, *args, **kwds):
+    value = len(cls.__members__) + 1
+    obj = object.__new__(cls)
+    obj._value_ = value
+    return obj
+  def __init__(self, short_name):
+    self.short_name = short_name if short_name else self.name
+  def __str__(self):
+    return self.name
+  def short(self):
+    return self.short_name
+  pre_sample            = "PreSC"
+  coll_cache            = "LegCol"
+  coll_intuitive        = "IntCol"
+  partition             = "Part"
+  part_rep              = "PartRep"
+  rep                   = "Rep"
+  coll_cache_asymm_link = "Coll"
+  clique_part           = "Cliq"
+  clique_part_by_degree = "CliqDeg"
 
 class RunConfig:
   def __init__(self, 
@@ -185,6 +207,12 @@ class RunConfig:
       cmd_line += ';'
     return cmd_line
   
+  def cache_percent_to_logname_str(self):
+    if self.cache_percent >= 0.01 or self.cache_percent == 0:
+      return f'{round(self.cache_percent*100):0>3}'
+    else:
+      return f'{round(self.cache_percent*1000):0>4}'
+
   def get_log_fname(self):
     std_out_log = f'{self.logdir}/'
     if self.unsupervised: std_out_log += "unsup_"
@@ -193,7 +221,7 @@ class RunConfig:
     else:                  std_out_log += "wg_"
     std_out_log += '_'.join(
       [self.framework.name, self.model.name, self.dataset.short()] +
-      [self.cache_policy.name, f'cache_rate_{round(self.cache_percent*100):0>3}'] + 
+      [self.cache_policy.name, f'cache_rate_{self.cache_percent_to_logname_str()}'] + 
       [f'batch_size_{self.batchsize}'])
     if self.use_amp:
       std_out_log += '_amp'
