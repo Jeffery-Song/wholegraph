@@ -281,7 +281,7 @@ def main(worker_id, run_config):
     ###################
     # torch multi process
     # fixme
-    torch.set_num_threads(1)
+    torch.set_num_threads(run_config['omp_thread_num'] // run_config['num_worker'])
     os.environ["RANK"] = str(worker_id)
     os.environ["WORLD_SIZE"] = str(run_config["num_worker"])
     # slurm in Selene has MASTER_ADDR env

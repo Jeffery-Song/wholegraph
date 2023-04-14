@@ -194,6 +194,7 @@ class RunConfig:
     cmd_line += f' --neighbors {self.neighbors} '
     cmd_line += f' --model {self.model.name} '
     cmd_line += f' --framework {self.framework.name} '
+    cmd_line += f' --omp_thread_num {self.omp_thread_num} '
     if self.use_collcache:
       cmd_line += f' --use_collcache '
       cmd_line += f' --cache_percentage {self.cache_percent} '
@@ -283,7 +284,7 @@ class RunConfig:
 
       if durable_log:
         os.system('mkdir -p {}'.format(self.logdir))
-      status = os.system(self.form_cmd(durable_log))
+      status = os.system('ulimit -c 0;' + self.form_cmd(durable_log))
       os.system('echo quit | nvidia-cuda-mps-control 2> /dev/null')
       if os.WEXITSTATUS(status) != 0:
         print("FAILED!")
