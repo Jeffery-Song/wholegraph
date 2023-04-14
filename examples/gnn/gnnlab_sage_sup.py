@@ -42,6 +42,9 @@ def wg_params(parser):
         "-c", "--num_workers", type="int", dest="num_worker", default=8, help="number of workers"
     )
     parser.add_option(
+        "--num_intra_size", type="int", dest="num_intra_size", default=8, help="number of local workers"
+    )
+    parser.add_option(
         "-r",
         "--root_dir",
         dest="root_dir",
@@ -203,7 +206,7 @@ def do_sup_sample(ids, dist_homo_graph, run_config):
     return ret
 
 def ds_load(worker_id, run_config):
-    wm_comm = create_intra_node_communicator(run_config["worker_id"], run_config["num_worker"], num_worker)
+    wm_comm = create_intra_node_communicator(run_config["worker_id"], run_config["num_worker"], run_config["num_intra_size"])
     wm_embedding_comm = None
     if run_config["use_nccl"]:
         wm_embedding_comm = create_global_communicator(run_config["worker_id"], run_config["num_worker"])

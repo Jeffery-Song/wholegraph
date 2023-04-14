@@ -118,6 +118,7 @@ class RunConfig:
                logdir:str=LOG_DIR):
     self.logdir                 = logdir
     self.num_workers            = num_workers
+    self.num_intra_size         = 0
     self.root_dir               = '/nvme/songxiaoniu/graph-learning/wholegraph'
     self.dataset                = dataset
     self.epochs                 = 4
@@ -179,6 +180,10 @@ class RunConfig:
     
     # parameters
     cmd_line += f' --num_workers {self.num_workers} '
+    if self.num_intra_size != 0:
+      cmd_line += f' --num_intra_size {self.num_intra_size} '
+    else:
+      cmd_line += f' --num_intra_size {self.num_workers} '
     cmd_line += f' --root_dir {self.root_dir} '
     cmd_line += f' --graph_name {str(self.dataset)} '
     cmd_line += f' --epochs {self.epochs} '
