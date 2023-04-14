@@ -4,9 +4,10 @@ from common_parser import *
 from runner_helper import *
 from runner import cfg_list_collector
 
-selected_col = ['model', 'unsupervised', 'dataset_short']
-selected_col += ['use_collcache', 'cache_policy', 'cache_percentage']
-selected_col += ['num_worker', 'batchsize']
+selected_col = ['short_app']
+selected_col += ['policy_impl', 'cache_percentage', 'batchsize']
+selected_col += ['dataset_short']
+selected_col += ['num_worker']
 selected_col += ['use_amp', 'epoch_e2e_time', 'cuda_usage']
 
 selected_col += ['Step(average) L1 sample']
@@ -18,10 +19,11 @@ selected_col += ['Time.L','Time.R','Time.C']
 selected_col += ['Wght.L','Wght.R','Wght.C']
 selected_col += ['Thpt.L','Thpt.R','Thpt.C']
 selected_col += ['SizeGB.L','SizeGB.R','SizeGB.C']
-# selected_col += ['optimal_local_rate','optimal_remote_rate','optimal_cpu_rate']
+selected_col += ['optimal_local_rate','optimal_remote_rate','optimal_cpu_rate']
 selected_col += ['coll_cache:local_cache_rate']
 selected_col += ['coll_cache:remote_cache_rate']
 selected_col += ['coll_cache:global_cache_rate']
+selected_col += ['coll_cache:solve_time']
 
 cfg_list_collector = (cfg_list_collector.copy()
   # .select('use_collcache', [True])
