@@ -214,6 +214,8 @@ class RunConfig:
     return cmd_line
   
   def cache_percent_to_logname_str(self):
+    if self.use_collcache == False:
+      return f'{round(1000/self.num_workers):0>4}'
     if self.cache_percent >= 0.01 or self.cache_percent == 0:
       return f'{round(self.cache_percent*100):0>3}'
     else:
