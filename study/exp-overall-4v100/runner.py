@@ -16,6 +16,7 @@ cur_common_base = (ConfigList()
   .override('presc_epoch', [2])
   .override('use_amp', [True])
   .override('empty_feat', [24])
+  .override('omp_thread_num', [40])
   )
 
 cfg_list_collector = ConfigList.Empty()
@@ -26,7 +27,7 @@ GraphSage
 # 1.1 unsup, large batch
 cur_common_base = (cur_common_base.copy().override('model', [Model.sage]).override('unsupervised', [True]))
 cur_common_base = (cur_common_base.copy().override('batchsize', [2000]).override('local_step', [250]))
-cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.papers100M_undir, ]).override('cache_percent', pg(1,2,1) + pg(4,8,2) + [0.10]))
+cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.papers100M_undir, ]).override('cache_percent', pg(1,2,1) + pg(4,8,4) + [0.10]))
 cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.friendster,       ]).override('cache_percent', pg(1,2,1) + pg(4,6,2) + [0.08]))
 # # # 1.2 unsup, mag 240 requires different batch
 cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.mag240m_homo,     ]).override('cache_percent', [0.002, 0.006, 0.01]).override('batchsize', [ 500]))
@@ -37,8 +38,8 @@ cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.ma
 # 1.1 sup, large batch
 cur_common_base = (cur_common_base.copy().override('unsupervised', [False]))
 cur_common_base = (cur_common_base.copy().override('batchsize', [8000]))
-cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.papers100M_undir, ]).override('cache_percent', pg(1,2,1) + pg(4,10,2) + [0.11]))
-cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.friendster,       ]).override('cache_percent', pg(1,2,1) + pg(4, 6,2) + [0.08]))
+cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.papers100M_undir, ]).override('cache_percent', pg(1,2,1) + pg(4,8,4) + [0.11]))
+cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.friendster,       ]).override('cache_percent', pg(1,2,1) + pg(4,6,2) + [0.08]))
 # # # 1.2 sup, mag 240 requires different batch
 cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.mag240m_homo,     ]).override('cache_percent', [0.002, 0.006, 0.01]).override('batchsize', [4000]))
 cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.mag240m_homo,     ]).override('cache_percent', [0.002, 0.006, 0.01]).override('batchsize', [8000]))
@@ -52,6 +53,7 @@ cfg_list_collector.hyper_override(
     [True, CachePolicy.rep, "DIRECT", ""],
     [True, CachePolicy.rep, "", "MPSPhase"],
     [True, CachePolicy.coll_cache_asymm_link, "", "MPSPhase"],
+    [True, CachePolicy.coll_cache_asymm_link, "DIRECT", ""],
     # [False, CachePolicy.coll_cache_asymm_link, "", ""]
 ])
 cfg_list_collector.override('coll_cache_scale', [
