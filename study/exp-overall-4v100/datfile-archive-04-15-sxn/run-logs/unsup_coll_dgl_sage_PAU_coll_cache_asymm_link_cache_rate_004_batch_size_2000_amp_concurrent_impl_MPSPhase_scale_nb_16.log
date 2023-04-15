@@ -1,0 +1,217 @@
+succeed=True
+[CUDA] cuda: usage: 5.54 GB
+0 :  {link #0 : 1}, {link #1 : 2}, {link #2 : 3},
+1 :  {link #0 : 2}, {link #1 : 3}, {link #2 : 0},
+2 :  {link #0 : 3}, {link #1 : 0}, {link #2 : 1},
+3 :  {link #0 : 0}, {link #1 : 1}, {link #2 : 2},
+0 :  {link #0 : 1}, {link #1 : 2}, {link #2 : 3},
+1 :  {link #0 : 2}, {link #1 : 3}, {link #2 : 0},
+2 :  {link #0 : 3}, {link #1 : 0}, {link #2 : 1},
+3 :  {link #0 : 0}, {link #1 : 1}, {link #2 : 2},
+0 :  {link #0 : 1}, {link #1 : 2}, {link #2 : 3},
+1 :  {link #0 : 2}, {link #1 : 3}, {link #2 : 0},
+2 :  {link #0 : 3}, {link #1 : 0}, {link #2 : 1},
+3 :  {link #0 : 0}, {link #1 : 1}, {link #2 : 2},
+0 : local 72, cpu 8 {link #0 : g1 24}, {link #1 : g2 24}, {link #2 : g3 24},
+1 : local 72, cpu 8 {link #0 : g2 24}, {link #1 : g3 24}, {link #2 : g0 24},
+2 : local 72, cpu 8 {link #0 : g3 24}, {link #1 : g0 24}, {link #2 : g1 24},
+3 : local 72, cpu 8 {link #0 : g0 24}, {link #1 : g1 24}, {link #2 : g2 24},
+0 : local 72, cpu 8 {link #0 : g1 24}, {link #1 : g2 24}, {link #2 : g3 24},
+1 : local 72, cpu 8 {link #0 : g2 24}, {link #1 : g3 24}, {link #2 : g0 24},
+2 : local 72, cpu 8 {link #0 : g3 24}, {link #1 : g0 24}, {link #2 : g1 24},
+3 : local 72, cpu 8 {link #0 : g0 24}, {link #1 : g1 24}, {link #2 : g2 24},
+0 : local 72, cpu 8 {link #0 : g1 24}, {link #1 : g2 24}, {link #2 : g3 24},
+1 : local 72, cpu 8 {link #0 : g2 24}, {link #1 : g3 24}, {link #2 : g0 24},
+2 : local 72, cpu 8 {link #0 : g3 24}, {link #1 : g0 24}, {link #2 : g1 24},
+3 : local 72, cpu 8 {link #0 : g0 24}, {link #1 : g1 24}, {link #2 : g2 24},
+0 :  {link #0 : 1}, {link #1 : 2}, {link #2 : 3},
+1 :  {link #0 : 2}, {link #1 : 3}, {link #2 : 0},
+2 :  {link #0 : 3}, {link #1 : 0}, {link #2 : 1},
+3 :  {link #0 : 0}, {link #1 : 1}, {link #2 : 2},
+0 : local 72, cpu 8 {link #0 : g1 24}, {link #1 : g2 24}, {link #2 : g3 24},
+1 : local 72, cpu 8 {link #0 : g2 24}, {link #1 : g3 24}, {link #2 : g0 24},
+2 : local 72, cpu 8 {link #0 : g3 24}, {link #1 : g0 24}, {link #2 : g1 24},
+3 : local 72, cpu 8 {link #0 : g0 24}, {link #1 : g1 24}, {link #2 : g2 24},
+Set parameter WLSAccessID
+Set parameter WLSSecret
+Set parameter LicenseID
+Set parameter TimeLimit to value 200
+Set parameter MIPGap to value 0.05
+Set parameter LogFile to value "cppsolver.log"
+Set parameter Threads to value 40
+Academic license - for non-commercial use only - registered to xiaoniu.sxn@sjtu.edu.cn
+Gurobi Optimizer version 9.5.1 build v9.5.1rc2 (linux64)
+Thread count: 40 physical cores, 80 logical processors, using up to 40 threads
+Academic license - for non-commercial use only - registered to xiaoniu.sxn@sjtu.edu.cn
+Optimize a model with 13652 rows, 4459 columns and 41944 nonzeros
+Model fingerprint: 0x1217f295
+Variable types: 5 continuous, 4454 integer (4454 binary)
+Coefficient statistics:
+  Matrix range     [5e-09, 3e+04]
+  Objective range  [1e+00, 1e+00]
+  Bounds range     [1e+00, 1e+00]
+  RHS range        [1e+00, 1e+04]
+Warning: Model contains large matrix coefficient range
+         Consider reformulating model or setting NumericFocus parameter
+         to avoid numerical issues.
+Found heuristic solution: objective 53165.556249
+Presolve removed 9616 rows and 175 columns
+Presolve time: 0.05s
+Presolved: 4036 rows, 4284 columns, 12096 nonzeros
+Variable types: 0 continuous, 4284 integer (4284 binary)
+Found heuristic solution: objective 50754.825049
+
+Root relaxation: objective 2.627837e+04, 3145 iterations, 0.03 seconds (0.02 work units)
+
+    Nodes    |    Current Node    |     Objective Bounds      |     Work
+ Expl Unexpl |  Obj  Depth IntInf | Incumbent    BestBd   Gap | It/Node Time
+
+     0     0 26278.3735    0   21 50754.8250 26278.3735  48.2%     -    0s
+H    0     0                    26444.528391 26278.3735  0.63%     -    0s
+
+Explored 1 nodes (5237 simplex iterations) in 0.13 seconds (0.09 work units)
+Thread count was 40 (of 80 available processors)
+
+Solution count 3: 26444.5 50754.8 53165.6 
+
+Optimal solution found (tolerance 5.00e-02)
+Best objective 2.644452839067e+04, best bound 2.627837352827e+04, gap 0.6283%
+coll_cache:optimal_local_rate=0.156878,0.163621,0.156016,0.145255,
+coll_cache:optimal_remote_rate=0.463179,0.456436,0.464041,0.474802,
+coll_cache:optimal_cpu_rate=0.379943,0.379943,0.379943,0.379943,
+z=26444.5
+test_result:init:feat_nbytes=56862697472
+test_result:init:cache_nbytes=2331370496
+test_result:init:feat_nbytes=56862697472
+test_result:init:cache_nbytes=2331370496
+test_result:init:feat_nbytes=56862697472
+test_result:init:cache_nbytes=2331370496
+test_result:init:feat_nbytes=56862697472
+test_result:init:cache_nbytes=2331370496
+    [Step(average) Profiler Level 1 E3 S999]
+        L1  sample           0.003869 | send           0.000000
+        L1  recv             0.000000 | copy           0.019706 | convert time 0.000000 | train  0.007293
+        L1  feature nbytes  563.43 MB | label nbytes 0.00 Bytes
+        L1  id nbytes      0.00 Bytes | graph nbytes 0.00 Bytes
+        L1  miss nbytes     218.88 MB | remote nbytes  258.02 MB
+        L1  num nodes               0 | num samples           0
+        L1  seq duration     0.000000 | refresh duration   0.000000
+    [Step(average) Profiler Level 2 E3 S999]
+        L2  shuffle     0.000000 | core sample  0.000000 | id remap        0.000000
+        L2  graph copy  0.000000 | id copy      0.000000 | cache feat copy 0.019706
+        L2  last layer sample time 0.000000 | size 0.000000
+    [Step(average) Profiler Level 3 E3 S999]
+        L3  khop sample coo  0.000000 | khop sort coo      0.000000 | khop count edge     0.000000 | khop compact edge 0.000000
+        L3  walk sample coo  0.000000 | walk topk total    0.000000 | walk topk step1     0.000000 | walk topk step2   0.000000
+        L3  walk topk step3  0.000000 | walk topk step4    0.000000 | walk topk step5     0.000000
+        L3  walk topk step6  0.000000 | walk topk step7    0.000000
+        L3  remap unique     0.000000 | remap populate     0.000000 | remap mapnode       0.000000 | remap mapedge     0.000000
+        L3  cache get_index  0.000789 | cache copy_index   0.000000 | cache extract_miss  0.000000
+        L3  cache copy_miss  0.000000 | cache combine_miss 0.018874 | cache combine cache 0.000179 | cache combine remote 0.002279
+        L3  label extract  0.000000
+    [Profiler Level Percentiles E3 S999]
+        p50.00_tail_logl2featcopy=0.019592
+        p90.00_tail_logl2featcopy=0.020328
+        p95.00_tail_logl2featcopy=0.020405
+        p99.00_tail_logl2featcopy=0.020551
+        p99.90_tail_logl2featcopy=0.021868
+[CUDA] cuda: usage: 12.00 GB
+Rank=3, Graph loaded.
+!!!!dist_homo_graph enumerate latency per epoch: 0.009391, per step: 0.000038
+presamping
+presamping takes 13.56352186203003
+Rank=2, Graph loaded.
+!!!!dist_homo_graph enumerate latency per epoch: 0.010319, per step: 0.000041
+presamping
+presamping takes 20.32197618484497
+Rank=1, Graph loaded.
+!!!!dist_homo_graph enumerate latency per epoch: 0.009362, per step: 0.000037
+presamping
+presamping takes 20.24188804626465
+config:eval_tsp="2023-04-14 17:43:18"
+config:num_worker=4
+config:num_intra_size=4
+config:root_dir=/nvme/songxiaoniu/graph-learning/wholegraph
+config:graph_name=ogbn-papers100M
+config:epochs=4
+config:batchsize=2000
+config:skip_epoch=2
+config:local_step=250
+config:presc_epoch=2
+config:neighbors=10,25
+config:hiddensize=256
+config:num_layer=2
+config:model=sage
+config:framework=dgl
+config:dataloaderworkers=0
+config:dropout=0.5
+config:lr=0.003
+config:use_nccl=False
+config:use_amp=True
+config:use_collcache=True
+config:cache_percentage=0.04
+config:cache_policy=coll_cache_asymm_link
+config:omp_thread_num=40
+config:unsupervised=True
+config:classnum=172
+config:global_barrier=<multiprocessing.synchronize.Barrier object at 0x7fe916c4e460>
+config:worker_id=0
+creating_intra_node_communicator root=0, local_size=4, world_size=4
+Rank=0, Graph loaded.
+!!!!dist_homo_graph enumerate latency per epoch: 0.009231, per step: 0.000037
+epoch=4 total_steps=1000
+presamping
+presamping takes 19.418689012527466
+start training...
+[Epoch 0], time=9.229328393936157, loss=0.6931472420692444
+[Epoch 1], time=7.764230728149414, loss=0.6931472420692444
+[Epoch 2], time=7.713217735290527, loss=0.6931472420692444
+[Epoch 3], time=7.715531349182129, loss=0.6931472420692444
+|===========================================================================|
+|                  PyTorch CUDA memory summary, device ID 0                 |
+|---------------------------------------------------------------------------|
+|            CUDA OOMs: 0            |        cudaMalloc retries: 0         |
+|===========================================================================|
+|        Metric         | Cur Usage  | Peak Usage | Tot Alloc  | Tot Freed  |
+|---------------------------------------------------------------------------|
+| Allocated memory      |   77359 KB |  426751 KB |    1275 GB |    1275 GB |
+|       from large pool |   70323 KB |  420292 KB |    1259 GB |    1259 GB |
+|       from small pool |    7036 KB |    8952 KB |      16 GB |      15 GB |
+|---------------------------------------------------------------------------|
+| Active memory         |   77359 KB |  426751 KB |    1275 GB |    1275 GB |
+|       from large pool |   70323 KB |  420292 KB |    1259 GB |    1259 GB |
+|       from small pool |    7036 KB |    8952 KB |      16 GB |      15 GB |
+|---------------------------------------------------------------------------|
+| GPU reserved memory   |    1284 MB |    1284 MB |    1284 MB |       0 B  |
+|       from large pool |    1272 MB |    1272 MB |    1272 MB |       0 B  |
+|       from small pool |      12 MB |      12 MB |      12 MB |       0 B  |
+|---------------------------------------------------------------------------|
+| Non-releasable memory |  295376 KB |  622029 KB |    1572 GB |    1572 GB |
+|       from large pool |  292173 KB |  618741 KB |    1556 GB |    1555 GB |
+|       from small pool |    3203 KB |    6400 KB |      16 GB |      16 GB |
+|---------------------------------------------------------------------------|
+| Allocations           |      58    |      74    |  204834    |  204776    |
+|       from large pool |      11    |      21    |   62544    |   62533    |
+|       from small pool |      47    |      58    |  142290    |  142243    |
+|---------------------------------------------------------------------------|
+| Active allocs         |      58    |      74    |  204834    |  204776    |
+|       from large pool |      11    |      21    |   62544    |   62533    |
+|       from small pool |      47    |      58    |  142290    |  142243    |
+|---------------------------------------------------------------------------|
+| GPU reserved segments |      18    |      18    |      18    |       0    |
+|       from large pool |      12    |      12    |      12    |       0    |
+|       from small pool |       6    |       6    |       6    |       0    |
+|---------------------------------------------------------------------------|
+| Non-releasable allocs |      23    |      37    |   70495    |   70472    |
+|       from large pool |       6    |      14    |   35047    |   35041    |
+|       from small pool |      17    |      25    |   35448    |   35431    |
+|---------------------------------------------------------------------------|
+| Oversize allocations  |       0    |       0    |       0    |       0    |
+|---------------------------------------------------------------------------|
+| Oversize GPU segments |       0    |       0    |       0    |       0    |
+|===========================================================================|
+
+[TRAIN_TIME] train time is 32.424221 seconds
+[EPOCH_TIME] 8.106055 seconds, maybe large due to not enough epoch skipped.
+[EPOCH_TIME] 7.714516 seconds
+
