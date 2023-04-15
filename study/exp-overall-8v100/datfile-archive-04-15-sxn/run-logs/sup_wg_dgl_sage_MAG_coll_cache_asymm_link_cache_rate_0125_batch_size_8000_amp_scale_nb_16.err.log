@@ -1,0 +1,25 @@
+/usr/lib/python3/dist-packages/requests/__init__.py:89: RequestsDependencyWarning: urllib3 (1.26.12) or chardet (3.0.4) doesn't match a supported version!
+  warnings.warn("urllib3 ({}) or chardet ({}) doesn't match a supported "
+[W socket.cpp:601] [c10d] The client socket has failed to connect to [localhost]:12335 (errno: 99 - Cannot assign requested address).
+[W socket.cpp:601] [c10d] The client socket has failed to connect to [localhost]:12335 (errno: 99 - Cannot assign requested address).
+[W socket.cpp:601] [c10d] The client socket has failed to connect to [localhost]:12335 (errno: 99 - Cannot assign requested address).
+[W socket.cpp:601] [c10d] The client socket has failed to connect to [localhost]:12335 (errno: 99 - Cannot assign requested address).
+[W socket.cpp:601] [c10d] The client socket has failed to connect to [localhost]:12335 (errno: 99 - Cannot assign requested address).
+[W socket.cpp:601] [c10d] The client socket has failed to connect to [localhost]:12335 (errno: 99 - Cannot assign requested address).
+Rank=3 done reading 61040125 embedding vectors from file /nvme/songxiaoniu/graph-learning/wholegraph/mag240m_homo/converted/homograph_csr_row_ptr
+Rank=2 done reading 61040125 embedding vectors from file /nvme/songxiaoniu/graph-learning/wholegraph/mag240m_homo/converted/homograph_csr_row_ptr
+Rank=2 done reading 61040125 embedding vectors from file /nvme/songxiaoniu/graph-learning/wholegraph/mag240m_homo/converted/homograph_csr_row_ptr
+Rank=3 done reading 61040125 embedding vectors from file /nvme/songxiaoniu/graph-learning/wholegraph/mag240m_homo/converted/homograph_csr_row_ptr
+Rank=0 done reading 61040125 embedding vectors from file /nvme/songxiaoniu/graph-learning/wholegraph/mag240m_homo/converted/homograph_csr_row_ptr
+Rank=1 done reading 61040125 embedding vectors from file /nvme/songxiaoniu/graph-learning/wholegraph/mag240m_homo/converted/homograph_csr_row_ptr
+Rank=1 done reading 61040125 embedding vectors from file /nvme/songxiaoniu/graph-learning/wholegraph/mag240m_homo/converted/homograph_csr_row_ptr
+Rank=0 done reading 61040125 embedding vectors from file /nvme/songxiaoniu/graph-learning/wholegraph/mag240m_homo/converted/homograph_csr_row_ptr
+Rank=3 done reading 863617956 embedding vectors from file /nvme/songxiaoniu/graph-learning/wholegraph/mag240m_homo/converted/homograph_csr_col_idx
+Rank=2 done reading 863617956 embedding vectors from file /nvme/songxiaoniu/graph-learning/wholegraph/mag240m_homo/converted/homograph_csr_col_idx
+Rank=1 done reading 863617956 embedding vectors from file /nvme/songxiaoniu/graph-learning/wholegraph/mag240m_homo/converted/homograph_csr_col_idx
+Rank=0 done reading 863617956 embedding vectors from file /nvme/songxiaoniu/graph-learning/wholegraph/mag240m_homo/converted/homograph_csr_col_idx
+File /wholegraph/wholegraph/whole_memory.cc Line 1249 cudaMalloc((void **) &h->local_mem_ptr, malloc_size) returned cudaErrorMemoryAllocation.
+File /wholegraph/wholegraph/whole_memory.cc Line 1249 cudaMalloc((void **) &h->local_mem_ptr, malloc_size) returned cudaErrorMemoryAllocation.
+File /wholegraph/wholegraph/whole_memory.cc Line 1249 cudaMalloc((void **) &h->local_mem_ptr, malloc_size) returned cudaErrorMemoryAllocation.
+File /wholegraph/wholegraph/whole_memory.cc Line 1249 cudaMalloc((void **) &h->local_mem_ptr, malloc_size) returned cudaErrorMemoryAllocation.
+[E whole_graph_pytorch_wrapper.cc:147] detect an abnormal terminated child, signal is Aborted
