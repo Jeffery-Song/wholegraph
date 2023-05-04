@@ -39,8 +39,8 @@ cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.ma
 # 1.1 sup, large batch
 cur_common_base = (cur_common_base.copy().override('unsupervised', [False]))
 cur_common_base = (cur_common_base.copy().override('batchsize', [8000]))
-cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.papers100M_undir, ]).override('cache_percent', pg(1,2,1) + pg(4,20,4) + [0.25,       1]).override('use_amp', [False]))
-cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.friendster,       ]).override('cache_percent', pg(1,2,1) + pg(4,20,4) + [0.25, 0.40, 1]).override('use_amp', [False]))
+cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.papers100M_undir, ]).override('cache_percent', pg(1,2,1) + pg(4,12,2) + pg(16,20,4) + [0.25,       1]).override('use_amp', [False]))
+cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.friendster,       ]).override('cache_percent', pg(1,2,1) + pg(4,12,2) + pg(16,20,4) + [0.25, 0.40, 1]).override('use_amp', [False]))
 # # # 1.2 sup, mag 240 requires different batch
 # cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.mag240m_homo,     ]).override('cache_percent', pg(1,2,1) + pg(4,12,4) + [0.16]).override('batchsize', [4000]).override('use_amp', [True]))
 cfg_list_collector.concat(cur_common_base.copy().override('dataset', [Dataset.mag240m_homo,     ]).override('cache_percent', pg(1,2,1) + pg(4,12,4) + [0.16]).override('batchsize', [8000]).override('use_amp', [True]))

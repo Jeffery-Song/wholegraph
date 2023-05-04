@@ -1,0 +1,126 @@
+succeed=True
+    [Step(average) Profiler Level 1 E3 S999]
+        L1  sample           0.001865 | send           0.000000
+        L1  recv             0.000000 | copy           0.003377 | convert time 0.000000 | train  0.004769
+        L1  feature nbytes 0.00 Bytes | label nbytes 0.00 Bytes
+        L1  id nbytes      0.00 Bytes | graph nbytes 0.00 Bytes
+        L1  miss nbytes    0.00 Bytes | remote nbytes 0.00 Bytes
+        L1  num nodes               0 | num samples           0
+    [Step(average) Profiler Level 2 E3 S999]
+        L2  shuffle     0.000000 | core sample  0.000000 | id remap        0.000000
+        L2  graph copy  0.000000 | id copy      0.000000 | cache feat copy 0.003377
+        L2  last layer sample time 0.000000 | size 0.000000
+    [Step(average) Profiler Level 3 E3 S999]
+        L3  khop sample coo  0.000000 | khop sort coo      0.000000 | khop count edge     0.000000 | khop compact edge 0.000000
+        L3  walk sample coo  0.000000 | walk topk total    0.000000 | walk topk step1     0.000000 | walk topk step2   0.000000
+        L3  walk topk step3  0.000000 | walk topk step4    0.000000 | walk topk step5     0.000000
+        L3  walk topk step6  0.000000 | walk topk step7    0.000000
+        L3  remap unique     0.000000 | remap populate     0.000000 | remap mapnode       0.000000 | remap mapedge     0.000000
+        L3  cache get_index  0.000000 | cache copy_index   0.000000 | cache extract_miss  0.000000
+        L3  cache copy_miss  0.000000 | cache combine_miss 0.000000 | cache combine cache 0.000000 | cache combine remote 0.000000
+        L3  label extract  0.000000
+    [Profiler Level Percentiles E3 S999]
+        p50.00_tail_logl2featcopy=0.003531
+        p90.00_tail_logl2featcopy=0.003776
+        p95.00_tail_logl2featcopy=0.003796
+        p99.00_tail_logl2featcopy=0.004017
+        p99.90_tail_logl2featcopy=0.008588
+[CUDA] cuda: usage: 16.77 GB
+config:eval_tsp="2023-04-11 21:09:39"
+config:num_worker=8
+config:root_dir=/nvme/songxiaoniu/graph-learning/wholegraph
+config:graph_name=ogbn-papers100M
+config:epochs=4
+config:batchsize=2000
+config:skip_epoch=2
+config:local_step=125
+config:presc_epoch=2
+config:neighbors=10,25
+config:hiddensize=256
+config:num_layer=2
+config:model=sage
+config:framework=dgl
+config:dataloaderworkers=0
+config:dropout=0.5
+config:lr=0.003
+config:use_nccl=False
+config:use_amp=True
+config:use_collcache=False
+config:cache_percentage=0.25
+config:cache_policy=coll_cache_asymm_link
+config:omp_thread_num=40
+config:unsupervised=True
+config:classnum=172
+config:global_barrier=<multiprocessing.synchronize.Barrier object at 0x7f73689da280>
+config:worker_id=0
+creating_intra_node_communicator root=0, local_size=8, world_size=8
+Rank=0, Graph loaded.
+!!!!dist_homo_graph enumerate latency per epoch: 0.004310, per step: 0.000034
+epoch=4 total_steps=500
+start training...
+[Epoch 0], time=2.5412981510162354, loss=0.5227811932563782
+[Epoch 1], time=1.2585551738739014, loss=0.49474233388900757
+[Epoch 2], time=1.2539076805114746, loss=0.48756206035614014
+[Epoch 3], time=1.2555315494537354, loss=0.4764387905597687
+|===========================================================================|
+|                  PyTorch CUDA memory summary, device ID 0                 |
+|---------------------------------------------------------------------------|
+|            CUDA OOMs: 0            |        cudaMalloc retries: 0         |
+|===========================================================================|
+|        Metric         | Cur Usage  | Peak Usage | Tot Alloc  | Tot Freed  |
+|---------------------------------------------------------------------------|
+| Allocated memory      |  617239 KB |    1150 MB |     895 GB |     895 GB |
+|       from large pool |  610621 KB |    1144 MB |     888 GB |     888 GB |
+|       from small pool |    6618 KB |       8 MB |       6 GB |       6 GB |
+|---------------------------------------------------------------------------|
+| Active memory         |  617239 KB |    1150 MB |     895 GB |     895 GB |
+|       from large pool |  610621 KB |    1144 MB |     888 GB |     888 GB |
+|       from small pool |    6618 KB |       8 MB |       6 GB |       6 GB |
+|---------------------------------------------------------------------------|
+| GPU reserved memory   |    3164 MB |    3164 MB |    3164 MB |       0 B  |
+|       from large pool |    3152 MB |    3152 MB |    3152 MB |       0 B  |
+|       from small pool |      12 MB |      12 MB |      12 MB |       0 B  |
+|---------------------------------------------------------------------------|
+| Non-releasable memory |  316649 KB |    1278 MB |     926 GB |     926 GB |
+|       from large pool |  313027 KB |    1274 MB |     919 GB |     919 GB |
+|       from small pool |    3622 KB |       6 MB |       7 GB |       7 GB |
+|---------------------------------------------------------------------------|
+| Allocations           |      54    |      70    |   91390    |   91336    |
+|       from large pool |       8    |      18    |   29500    |   29492    |
+|       from small pool |      46    |      57    |   61890    |   61844    |
+|---------------------------------------------------------------------------|
+| Active allocs         |      54    |      70    |   91390    |   91336    |
+|       from large pool |       8    |      18    |   29500    |   29492    |
+|       from small pool |      46    |      57    |   61890    |   61844    |
+|---------------------------------------------------------------------------|
+| GPU reserved segments |      18    |      18    |      18    |       0    |
+|       from large pool |      12    |      12    |      12    |       0    |
+|       from small pool |       6    |       6    |       6    |       0    |
+|---------------------------------------------------------------------------|
+| Non-releasable allocs |      26    |      38    |   30426    |   30400    |
+|       from large pool |       7    |      14    |   15685    |   15678    |
+|       from small pool |      19    |      27    |   14741    |   14722    |
+|---------------------------------------------------------------------------|
+| Oversize allocations  |       0    |       0    |       0    |       0    |
+|---------------------------------------------------------------------------|
+| Oversize GPU segments |       0    |       0    |       0    |       0    |
+|===========================================================================|
+
+[TRAIN_TIME] train time is 6.310106 seconds
+[EPOCH_TIME] 1.577527 seconds, maybe large due to not enough epoch skipped.
+[EPOCH_TIME] 1.254875 seconds
+Rank=7, Graph loaded.
+!!!!dist_homo_graph enumerate latency per epoch: 0.004864, per step: 0.000039
+Rank=3, Graph loaded.
+!!!!dist_homo_graph enumerate latency per epoch: 0.004524, per step: 0.000036
+Rank=1, Graph loaded.
+!!!!dist_homo_graph enumerate latency per epoch: 0.004052, per step: 0.000032
+Rank=6, Graph loaded.
+!!!!dist_homo_graph enumerate latency per epoch: 0.004672, per step: 0.000037
+Rank=5, Graph loaded.
+!!!!dist_homo_graph enumerate latency per epoch: 0.004497, per step: 0.000036
+Rank=4, Graph loaded.
+!!!!dist_homo_graph enumerate latency per epoch: 0.004948, per step: 0.000040
+Rank=2, Graph loaded.
+!!!!dist_homo_graph enumerate latency per epoch: 0.004550, per step: 0.000036
+
