@@ -543,6 +543,7 @@ class HomoGraph(object):
         self.use_host_memory = use_host_memory
         normalized_graph_name = graph_name_normalize(graph_name)
         save_dir = os.path.join(dataset_dir, normalized_graph_name, "converted")
+        self.save_dir = save_dir
         if not check_data_integrity(save_dir, normalized_graph_name):
             print(
                 "path %s doesn't contain all the data for %s" % (save_dir, graph_name)
@@ -816,16 +817,28 @@ class HomoGraph(object):
         self.truncate_count = self.edge_count // comm.get_world_size()
 
     def start_iter(self, batch_size):
+        backup = torch.random.get_rng_state()
+        torch.random.manual_seed(0x76540123)
         self.batch_size = batch_size
         local_edge_count = self.end_edge_idx - self.start_edge_idx
         selected_count = self.truncate_count // batch_size * batch_size
-        self.train_edge_idx_list = (
-            torch.randperm(
-                local_edge_count, dtype=torch.int64, device="cpu", pin_memory=True
+        if os.path.exists(self.save_dir + "/global_train_edge_idx_rand"):
+            print("loading train edge idx from disk")
+            self.train_edge_idx_list = torch.load(self.save_dir + "/global_train_edge_idx_rand", map_location=torch.device('cpu')).pin_memory()
+            print("loading train edge idx from disk done")
+            print(self.train_edge_idx_list[0:100])
+        else:
+            print("generating train edge idx")
+            self.train_edge_idx_list = (
+                torch.randperm(
+                    self.edge_count, dtype=torch.int64, device="cpu", pin_memory=True
+                )
             )
-            + self.start_edge_idx
-        )
-        self.train_edge_idx_list = self.train_edge_idx_list[:selected_count]
+            print("generating train edge idx done, saving to disk")
+            torch.save(self.train_edge_idx_list, self.save_dir + "/global_train_edge_idx_rand")
+            print("saved train edge idx to disk")
+        torch.random.set_rng_state(backup)
+        self.train_edge_idx_list = self.train_edge_idx_list[self.start_edge_idx:self.end_edge_idx]
         return selected_count // batch_size
 
     def get_train_edge_batch(self, iter_id):

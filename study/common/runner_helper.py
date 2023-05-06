@@ -147,6 +147,8 @@ class RunConfig:
     self.num_feat_dim_hack      = None
     self.coll_cache_cpu_addup = ""
     self.coll_cache_scale = 0
+    self.coll_hash_impl = ""
+    self.coll_skip_hash = ""
 
     self.use_amp                = False
     self.use_nccl               = False
@@ -168,6 +170,12 @@ class RunConfig:
       cmd_line += f' SAMGRAPH_COLL_CACHE_CONCURRENT_LINK_IMPL={self.coll_cache_concurrent_link} SAMGRAPH_COLL_CACHE_CONCURRENT_LINK=1 '
     else:
       cmd_line += f' SAMGRAPH_COLL_CACHE_CONCURRENT_LINK=0 '
+
+    if self.coll_hash_impl != "":
+      cmd_line += f' COLL_HASH_IMPL={self.coll_hash_impl} '
+    if self.coll_skip_hash != "":
+      cmd_line += f' COLL_SKIP_HASH={self.coll_skip_hash} '
+
     if self.num_feat_dim_hack != None:
       cmd_line += f'SAMGRAPH_FAKE_FEAT_DIM={self.num_feat_dim_hack} '
     if self.custom_env != '':
@@ -239,6 +247,10 @@ class RunConfig:
       std_out_log += f'_concurrent_impl_{self.coll_cache_concurrent_link}'
     if self.coll_cache_scale != 0:
       std_out_log += f'_scale_nb_{self.coll_cache_scale}'
+    if self.coll_hash_impl != "":
+      std_out_log += f'_hash_impl_{self.coll_hash_impl}'
+    if self.coll_skip_hash != "":
+      std_out_log += f'_skip_hash_{self.coll_skip_hash}'
     return std_out_log
 
   def beauty(self):
@@ -256,6 +268,10 @@ class RunConfig:
       msg += f' concurrent_link={self.coll_cache_concurrent_link}'
     if self.coll_cache_scale != "":
       msg += f' scale_nb={self.coll_cache_scale}'
+    if self.coll_hash_impl != "":
+      msg += f' hash_impl={self.coll_hash_impl}'
+    if self.coll_skip_hash != "":
+      msg += f' skip_hash={self.coll_skip_hash}'
     return datetime.datetime.now().strftime('[%H:%M:%S]') + msg + '.'
 
   def run(self, mock=False, durable_log=True, callback = None, fail_only=False):
