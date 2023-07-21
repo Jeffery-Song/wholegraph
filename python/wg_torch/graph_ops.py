@@ -824,7 +824,7 @@ class HomoGraph(object):
         selected_count = self.truncate_count // batch_size * batch_size
         if os.path.exists(self.save_dir + "/global_train_edge_idx_rand"):
             print("loading train edge idx from disk")
-            self.train_edge_idx_list = torch.load(self.save_dir + "/global_train_edge_idx_rand", map_location=torch.device('cpu')).pin_memory()
+            self.train_edge_idx_list = torch.load(self.save_dir + "/global_train_edge_idx_rand", map_location=torch.device('cpu'))
             print("loading train edge idx from disk done")
             print(self.train_edge_idx_list[0:100])
         else:
@@ -838,7 +838,7 @@ class HomoGraph(object):
             torch.save(self.train_edge_idx_list, self.save_dir + "/global_train_edge_idx_rand")
             print("saved train edge idx to disk")
         torch.random.set_rng_state(backup)
-        self.train_edge_idx_list = self.train_edge_idx_list[self.start_edge_idx:self.end_edge_idx]
+        self.train_edge_idx_list = self.train_edge_idx_list[self.start_edge_idx:self.end_edge_idx].pin_memory()
         return selected_count // batch_size
 
     def get_train_edge_batch(self, iter_id):
