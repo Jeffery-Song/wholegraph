@@ -23,6 +23,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <sys/wait.h>
 
 #include "../macros.h"
 #include "gnn_ops.h"
@@ -133,6 +134,19 @@ size_t CheckSizesAndStrides(const std::vector<int64_t> &sizes,
 
 void WholeMemoryInitLib() {
   whole_graph::WholeMemoryInit();
+}
+
+int WholeWaitOneChild() {
+  int child_stat;
+  pid_t pid = waitpid(-1, &child_stat, 0);
+  if (WEXITSTATUS(child_stat) != 0) {
+    LOG(ERROR) << "detect a terminated child " << pid << ", status is "
+               << WEXITSTATUS(child_stat);
+    return 1;
+  } else if (WIFSIGNALED(child_stat)) {
+    LOG(ERROR) << "detect an abnormal terminated child, signal is " << strsignal(WTERMSIG(child_stat));
+    return 1;
+  } else return 0;
 }
 
 std::vector<int64_t> WholeMemoryGetUniqueID() {
@@ -1161,6 +1175,7 @@ PYBIND11_MODULE(wholegraph_pytorch, m) {
 
   m.doc() = "PyTorch API for WholeMemory.";
   m.def("init_lib", &WholeMemoryInitLib, "Init WholeMemory Lib");
+  m.def("wait_one_child", &WholeWaitOneChild, "Wait for one child process end");
   m.def("finalize_lib", &WholeMemoryFinalizeLib, "Finalize WholeMemory Lib");
 
   m.def("get_unique_id", &WholeMemoryGetUniqueID, "get unique_id for communicator");

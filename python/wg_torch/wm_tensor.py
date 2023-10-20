@@ -200,11 +200,12 @@ def create_wm_tensor_from_file(
         shape_count = 1
         for shape_dimsize in shape:
             shape_count *= shape_dimsize
-        assert shape_count == file_elt_count
+        assert shape_count == file_elt_count or file_elt_count == 0
     else:
         shape = (file_elt_count,)
     wmt = create_wm_tensor(wm_comm, shape, [], dtype, wm_tensor_type)
-    lt = get_local_tensor(wmt)
-    lt_2d = lt.reshape((lt.numel(), 1))
-    wg.load_local_tensor_from_embedding_file(lt_2d, filename, part_count, wm_comm)
+    if file_elt_count != 0:
+        lt = get_local_tensor(wmt)
+        lt_2d = lt.reshape((lt.numel(), 1))
+        wg.load_local_tensor_from_embedding_file(lt_2d, filename, part_count, wm_comm)
     return wmt

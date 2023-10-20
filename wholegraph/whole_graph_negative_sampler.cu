@@ -19,7 +19,9 @@
 #include <cub/cub.cuh>
 #include <thrust/scan.h>
 
+#include <curand_kernel.h>
 #include <random>
+#include <chrono>
 
 #include "data_type.h"
 #include "macros.h"
@@ -249,6 +251,42 @@ __global__ void PerNodeUniformNegativeSampleSmallNodeOptKernel(IdType *output,
   }
 }
 
+#define SAM_1D_GRID_FOR(loop_iter, num_input) \
+  assert(BLOCK_SIZE == blockDim.x);                       \
+  const size_t block_start = TILE_SIZE * blockIdx.x;      \
+  const size_t block_end = min(TILE_SIZE * (blockIdx.x + 1), num_input);  \
+  for (size_t loop_iter = threadIdx.x + block_start; loop_iter < block_end; loop_iter += BLOCK_SIZE) \
+
+#define SAM_1D_GRID_RND_IDX() \
+  (blockDim.x * blockIdx.x + threadIdx.x)
+
+template <typename T>
+inline T RoundUpDiv(T target, T unit) {
+  return (target + unit - 1) / unit;
+}
+
+template <typename T, size_t BLOCK_SIZE=256, size_t TILE_SIZE=1024>
+__global__ void fill_uniform(T* array, size_t array_len, T range_min, T range_max, curandState *random_states, size_t num_random_states) {
+  size_t rnd_state_idx = SAM_1D_GRID_RND_IDX();
+  assert(rnd_state_idx < num_random_states);
+  curandState local_state = random_states[rnd_state_idx];
+  SAM_1D_GRID_FOR(i, array_len) {
+    array[i] = (curand(&local_state) % (range_max - range_min + 1)) + range_min;
+  }
+  random_states[rnd_state_idx] = local_state;
+}
+
+__global__ void init_random_states(curandState *states, size_t num,unsigned long seed) {
+  size_t threadId = threadIdx.x + blockIdx.x * blockDim.x;
+  if (threadId < num) {
+    /** Using different seed & constant sequence 0 can reduce memory 
+    * consumption by 800M
+    * https://docs.nvidia.com/cuda/curand/device-api-overview.html#performance-notes
+    */
+    curand_init(seed+threadId, 0, 0, &states[threadId]);
+  }
+}
+
 template<typename IdType, typename WMIdType, typename WMOffsetType>
 void PerNodeUniformNegativeSampleComm(const std::function<void *(size_t)> &sample_output_allocator,
                                       void *wm_csr_row_ptr,
@@ -259,21 +297,27 @@ void PerNodeUniformNegativeSampleComm(const std::function<void *(size_t)> &sampl
                                       int negative_sample_count,
                                       const CUDAEnvFns &cuda_env_fns,
                                       cudaStream_t stream) {
-  thread_local std::random_device rd;
-  thread_local std::mt19937 gen(rd());
-  thread_local std::uniform_int_distribution<unsigned long long> distrib;
-  unsigned long long random_seed = distrib(gen);
-  int count = input_node_count * negative_sample_count;
-  auto *sample_output = (IdType *) sample_output_allocator(count);
-  PerNodeUniformNegativeSampleSmallNodeOptKernel<IdType, WMIdType, WMOffsetType><<<input_node_count, 32, 0, stream>>>(
-      sample_output,
-      (const IdType *) input_nodes,
-      input_node_count,
-      graph_dst_node_count,
-      negative_sample_count,
-      (WMOffsetType *) wm_csr_row_ptr,
-      (WMIdType *) wm_csr_col_ptr,
-      random_seed);
+  size_t array_len = input_node_count * negative_sample_count;
+  auto *sample_output = (IdType *) sample_output_allocator(array_len);
+
+  // prepare dim and cuda stream
+  if (array_len == 0) return;
+  const size_t num_tiles = RoundUpDiv<size_t>((size_t)array_len, 1024);
+  const dim3 grid(num_tiles);
+  const dim3 block(256);                              
+  auto cu_stream = static_cast<cudaStream_t>(stream);
+
+  // prepare seeds and random states
+  size_t num_states = grid.x * block.x;
+  curandState *random_states = NULL;
+  WM_CUDA_CHECK(cudaMalloc((void **) &random_states, sizeof(curandState) * num_states));
+  unsigned long seed = std::chrono::system_clock::now().time_since_epoch().count();
+  init_random_states<<<grid, block>>>(random_states, num_states, seed);
+  WM_CUDA_CHECK(cudaGetLastError());
+
+  // by uniform
+  assert(grid.x * block.x <= num_states);
+  fill_uniform<IdType><<<grid, block, 0, cu_stream>>>(sample_output, array_len, 0, graph_dst_node_count - 1, random_states, num_states);
   WM_CUDA_CHECK(cudaGetLastError());
 }
 

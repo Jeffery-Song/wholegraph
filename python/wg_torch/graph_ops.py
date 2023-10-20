@@ -509,6 +509,7 @@ class HomoGraph(object):
         self.edge_info = None
         self.wm_comm = None
         self.wm_nccl_embedding_comm = None
+        self.embedding_dim = None
 
     def id_type(self):
         return self.id_dtype
@@ -517,6 +518,7 @@ class HomoGraph(object):
         return self.feat_dtype
 
     def node_feat_shape(self):
+        if self.node_feat == None: return self.embedding_dim
         if isinstance(self.node_feat, embedding_ops.TrainableEmbedding):
             return self.node_feat.embedding.shape
         else:
@@ -541,6 +543,7 @@ class HomoGraph(object):
         self.use_host_memory = use_host_memory
         normalized_graph_name = graph_name_normalize(graph_name)
         save_dir = os.path.join(dataset_dir, normalized_graph_name, "converted")
+        self.save_dir = save_dir
         if not check_data_integrity(save_dir, normalized_graph_name):
             print(
                 "path %s doesn't contain all the data for %s" % (save_dir, graph_name)
@@ -581,6 +584,7 @@ class HomoGraph(object):
             ignore_embeddings is None or nodes[0]["name"] not in ignore_embeddings
         ):
             embedding_dim = nodes[0]["emb_dim"]
+            self.embedding_dim = embedding_dim
             src_dtype = string_to_pytorch_dtype(nodes[0]["dtype"])
             if feat_dtype is None:
                 feat_dtype = src_dtype
@@ -813,16 +817,28 @@ class HomoGraph(object):
         self.truncate_count = self.edge_count // comm.get_world_size()
 
     def start_iter(self, batch_size):
+        backup = torch.random.get_rng_state()
+        torch.random.manual_seed(0x76540123)
         self.batch_size = batch_size
         local_edge_count = self.end_edge_idx - self.start_edge_idx
         selected_count = self.truncate_count // batch_size * batch_size
-        self.train_edge_idx_list = (
-            torch.randperm(
-                local_edge_count, dtype=torch.int64, device="cpu", pin_memory=True
+        if os.path.exists(self.save_dir + "/global_train_edge_idx_rand"):
+            print("loading train edge idx from disk")
+            self.train_edge_idx_list = torch.load(self.save_dir + "/global_train_edge_idx_rand", map_location=torch.device('cpu'))
+            print("loading train edge idx from disk done")
+            print(self.train_edge_idx_list[0:100])
+        else:
+            print("generating train edge idx")
+            self.train_edge_idx_list = (
+                torch.randperm(
+                    self.edge_count, dtype=torch.int64, device="cpu", pin_memory=True
+                )
             )
-            + self.start_edge_idx
-        )
-        self.train_edge_idx_list = self.train_edge_idx_list[:selected_count]
+            print("generating train edge idx done, saving to disk")
+            torch.save(self.train_edge_idx_list, self.save_dir + "/global_train_edge_idx_rand")
+            print("saved train edge idx to disk")
+        torch.random.set_rng_state(backup)
+        self.train_edge_idx_list = self.train_edge_idx_list[self.start_edge_idx:self.end_edge_idx].pin_memory()
         return selected_count // batch_size
 
     def get_train_edge_batch(self, iter_id):
@@ -1122,6 +1138,11 @@ class NodeClassificationDataset(Dataset):
         self.dataset = list(
             list(zip(raw_data["idx"], raw_data["label"].astype(np.int64)))
         )
+        dataset_len = (len(self.dataset) + global_size - 1) // global_size
+        start_idx = dataset_len * global_rank
+        end_idx = min(dataset_len * (global_rank + 1), len(self.dataset))
+        self.dataset = self.dataset[start_idx: end_idx]
+        # print(f"[GPU{global_rank}]: dataset_size = {len(self.dataset)}, first item = {self.dataset[0]}")
 
     def __getitem__(self, index):
         return self.dataset[index]

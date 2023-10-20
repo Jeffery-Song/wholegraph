@@ -62,8 +62,8 @@ void NCCLTensorImpl::set_sizes_and_strides(torch::IntArrayRef new_size, torch::I
           // Keep stride monotonically increasing to match NumPy.
           sizes_and_strides_.stride_at_unchecked(dim) =
               std::max<int64_t>(
-                  sizes_and_strides_.size_at_unchecked(dim + 1), 1)
-              * sizes_and_strides_.stride_at_unchecked(dim + 1);
+                  sizes_and_strides_.size_at_unchecked(dim + 1).as_int_unchecked(), 1)
+              * sizes_and_strides_.stride_at_unchecked(dim + 1).as_int_unchecked();
         }
       }
       if (dim == 0)
